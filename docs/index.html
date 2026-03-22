@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>VerBump — Version File Manager</title>
+  <link rel="icon" type="image/png" href="verbump.png" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css" />
   <style>
     :root { color-scheme: light dark; }
@@ -20,17 +21,27 @@
       margin-bottom: .5rem;
     }
 
-    /* ── Download button pulse ── */
+    /* ── Navbar logo ── */
+    .navbar-logo { height: 28px; width: 28px; margin-right: .5rem; border-radius: 4px; }
+
+    /* ── Hero icon ── */
+    .hero-icon { width: 96px; height: 96px; margin-bottom: 1rem; border-radius: 16px; }
+
+    /* ── Hero tagline ── */
+    .hero-tagline { max-width: 560px; margin: 0 auto 2rem; }
+    .hero-meta    { font-size: .85rem; }
+
+    /* ── Download button pulse (uses filter: brightness for compositor-only repaint) ── */
     @keyframes pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(72,199,142,.5); }
-      50%       { box-shadow: 0 0 0 8px rgba(72,199,142,0); }
+      0%, 100% { filter: drop-shadow(0 0 0px rgba(72,199,142,.0)); }
+      50%       { filter: drop-shadow(0 0 6px rgba(72,199,142,.8)); }
     }
     .btn-download { animation: pulse 2.5s infinite; }
 
     /* ── Dark mode overrides ── */
     @media (prefers-color-scheme: dark) {
-      .box       { background-color: #1e1e2e; border: 1px solid #333; }
-      .content h3 { color: #e0e0e0; }
+      .box          { background-color: #1e1e2e; border: 1px solid #333; }
+      .content h3   { color: #e0e0e0; }
       footer.footer { background-color: #111; color: #aaa; }
       .tag.is-light { background-color: #2a2a3e; color: #ccc; }
     }
@@ -46,6 +57,9 @@
     .why-quote   { border-left: 4px solid #48c78e; padding: 2rem 2.5rem; }
     .why-quote p { line-height: 1.75; }
     .why-attr    { margin-top: 1rem; font-size: .9rem; }
+
+    /* ── Navbar brand accent ── */
+    .navbar-accent { color: #48c78e; }
   </style>
 </head>
 <body>
@@ -54,7 +68,8 @@
 <nav class="navbar is-dark" role="navigation" aria-label="main navigation">
   <div class="navbar-brand">
     <a class="navbar-item has-text-weight-bold" href="#">
-      <span style="color:#48c78e; margin-right:.4rem">▲</span> VerBump
+      <img class="navbar-logo" src="verbump.png" alt="VerBump logo" />
+      VerBump
     </a>
   </div>
   <div class="navbar-menu">
@@ -78,11 +93,12 @@
 <section class="hero hero-verbump is-medium">
   <div class="hero-body">
     <div class="container has-text-centered">
+      <img class="hero-icon" src="verbump.png" alt="VerBump icon" />
       <p class="title is-1 has-text-white">VerBump</p>
       <p class="subtitle is-4 has-text-grey-light mt-2">
         Version file manager for Windows developers
       </p>
-      <p class="has-text-grey-lighter mb-5" style="max-width:560px; margin:0 auto 2rem">
+      <p class="has-text-grey-lighter hero-tagline">
         Keep all your projects' <code>VERSION</code> files in one place.
         Bump major, minor, or patch with a single keystroke —
         SemVer, CalVer, or any custom scheme you define.
@@ -97,7 +113,7 @@
           View on GitHub
         </a>
       </div>
-      <p class="has-text-grey mt-4" style="font-size:.85rem">
+      <p class="has-text-grey mt-4 hero-meta">
         Windows 10/11 · Self-contained · No installer required · Free &amp; open source
       </p>
     </div>
