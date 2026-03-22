@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>VerBump — Version File Manager</title>
   <link rel="icon" type="image/png" href="verbump.png" />
+  <link rel="alternate" hreflang="de" href="/VerBump/de/" />
+  <link rel="alternate" hreflang="en" href="/VerBump/" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css" />
   <style>
     :root { color-scheme: light dark; }
@@ -82,6 +84,7 @@
       <a class="navbar-item" href="https://github.com/mbaas2/VerBump" target="_blank" rel="noopener">
         GitHub
       </a>
+      <a class="navbar-item" href="/VerBump/de/" title="Auf Deutsch lesen">🇩🇪</a>
       <div class="navbar-item">
         <a class="button is-light is-small"
            href="https://github.com/sponsors/mbaas2" target="_blank" rel="noopener">
@@ -331,5 +334,12 @@ Files: *.bak  *.tmp  *.log</code></pre>
   </div>
 </footer>
 
+<script>
+  if (!sessionStorage.getItem('lang-chosen') &&
+      (navigator.language || '').toLowerCase().startsWith('de')) {
+    sessionStorage.setItem('lang-chosen', 'de');
+    location.replace('/VerBump/de/');
+  }
+</script>
 </body>
 </html>
