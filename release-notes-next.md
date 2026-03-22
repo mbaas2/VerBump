@@ -1,4 +1,4 @@
-# What's new in v1.1.1
+# What's new in vNEXT
 
 ## New features
 
@@ -39,7 +39,7 @@
 
 ---
 
-## Was ist neu in v1.1.1
+## Was ist neu in vNEXT
 
 ## Neue Features
 

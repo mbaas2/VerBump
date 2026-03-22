@@ -91,9 +91,10 @@ if ($confirm -notmatch '^[Jj]') { throw "Release abgebrochen — kein GitHub-Rel
 Write-Host "[5/5] GitHub Release v$Version..." -ForegroundColor Yellow
 $VersionNotes = Join-Path $Root "release-notes-v$Version.md"
 
-# release-notes-next.md → release-notes-v{VERSION}.md
+# release-notes-next.md → release-notes-v{VERSION}.md  (vNEXT ersetzen)
 if (Test-Path $NextNotes) {
-    Rename-Item $NextNotes $VersionNotes
+    (Get-Content $NextNotes -Raw) -replace 'vNEXT', "v$Version" | Set-Content $VersionNotes -NoNewline
+    Remove-Item $NextNotes
     Write-Host "      release-notes-next.md → release-notes-v$Version.md" -ForegroundColor DarkGray
 }
 
@@ -114,7 +115,7 @@ gh @ghArgs
 if ($LASTEXITCODE -ne 0) { throw "gh release fehlgeschlagen." }
 
 # Leere release-notes-next.md für den nächsten Release anlegen
-Set-Content $NextNotes "# What's new in the next release`n`n## New features`n`n`n`n## Improvements`n`n`n`n---`n`n# Was ist neu im nächsten Release`n`n## Neue Features`n`n`n`n## Verbesserungen`n`n"
+Set-Content $NextNotes "# What's new in vNEXT`n`n## New features`n`n`n`n## Improvements`n`n`n`n---`n`n## Was ist neu in vNEXT`n`n## Neue Features`n`n`n`n## Verbesserungen`n`n"
 Write-Host "      Neue release-notes-next.md angelegt." -ForegroundColor DarkGray
 
 Write-Host ""

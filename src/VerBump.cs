@@ -221,24 +221,31 @@ public static class L {
 
     public static void Load(string baseDir) {
         string lang = WindowsUILanguage();
-        string Find(string l) {
-            foreach (var dir in new[] {
-                baseDir,
-                Path.GetDirectoryName(Environment.ProcessPath),
-                AppContext.BaseDirectory,
-                AppDomain.CurrentDomain.BaseDirectory,
-            }) {
+        // 1. Datei-System (ermöglicht Custom-Übersetzungen neben der EXE)
+        string FindFile(string l) {
+            foreach (var dir in new[] { baseDir, Path.GetDirectoryName(Environment.ProcessPath),
+                                        AppContext.BaseDirectory, AppDomain.CurrentDomain.BaseDirectory }) {
                 if (dir == null) continue;
                 var p = Path.Combine(dir, $"lang.{l}.json");
-                if (File.Exists(p)) return p;
+                if (File.Exists(p)) return File.ReadAllText(p);
             }
             return null;
         }
-        string path = Find(lang) ?? Find("en");
-        if (path == null) return;
-        if (!path.Contains($"lang.{lang}.json")) lang = "en";
+        // 2. Embedded Resource (immer verfügbar, egal wie die EXE aufgerufen wird)
+        string FindEmbedded(string l) {
+            var asm = System.Reflection.Assembly.GetExecutingAssembly();
+            using var stream = asm.GetManifestResourceStream($"VerBump.lang.{l}.json");
+            if (stream == null) return null;
+            using var reader = new System.IO.StreamReader(stream, System.Text.Encoding.UTF8);
+            return reader.ReadToEnd();
+        }
+        string json = FindFile(lang);
+        if (json == null) { json = FindFile("en");      if (json != null) lang = "en"; }
+        if (json == null) { json = FindEmbedded(lang);  }
+        if (json == null) { json = FindEmbedded("en");  if (json != null) lang = "en"; }
+        if (json == null) return;
         try {
-            _d = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path)) ?? new();
+            _d = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
             Lang = lang;
         } catch (Exception ex) { Log.Write("L.Load", ex); }
     }

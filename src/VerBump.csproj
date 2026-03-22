@@ -14,9 +14,12 @@
     <EmbeddedResource Include="VERSION" />
     <EmbeddedResource Include="Phosphor.ttf" />
     <EmbeddedResource Include="Phosphor-Bold.ttf" />
+    <EmbeddedResource Include="lang.de.json" />
+    <EmbeddedResource Include="lang.en.json" />
     <Content Include="verbump.ico">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
+    <!-- Auch als externe Dateien kopieren: ermöglicht Custom-Übersetzungen neben der EXE -->
     <Content Include="lang.de.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
