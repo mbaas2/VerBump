@@ -38,6 +38,9 @@
     /* ── Scheme table ── */
     .scheme-table td:first-child { font-family: monospace; white-space: nowrap; }
 
+    /* ── Footer note ── */
+    .footer-note { font-size: .85rem; color: #888; margin-top: .75rem; }
+
     /* ── Why section ── */
     .why-section { background: rgba(0,0,0,.035); }
     .why-quote   { border-left: 4px solid #48c78e; padding: 2rem 2.5rem; }
@@ -58,7 +61,7 @@
     <div class="navbar-end">
       <a class="navbar-item" href="#features">Features</a>
       <a class="navbar-item" href="#docs">Docs</a>
-      <a class="navbar-item" href="https://github.com/mbaas2/VerBump" target="_blank">
+      <a class="navbar-item" href="https://github.com/mbaas2/VerBump" target="_blank" rel="noopener">
         GitHub
       </a>
       <div class="navbar-item">
@@ -90,7 +93,7 @@
           ⬇ Download latest release
         </a>
         <a class="button is-dark is-medium"
-           href="https://github.com/mbaas2/VerBump" target="_blank">
+           href="https://github.com/mbaas2/VerBump" target="_blank" rel="noopener">
           View on GitHub
         </a>
       </div>
@@ -286,9 +289,13 @@ Files: *.bak  *.tmp  *.log</code></pre>
   <div class="content has-text-centered">
     <p>
       <strong>VerBump</strong> by
-      <a href="https://github.com/mbaas2" target="_blank">Michael Baas</a> ·
-      <a href="https://github.com/mbaas2/VerBump/blob/main/LICENSE" target="_blank">MIT License</a> ·
-      <a href="https://github.com/mbaas2/VerBump" target="_blank">GitHub</a>
+      <a href="https://github.com/mbaas2" target="_blank" rel="noopener">Michael Baas</a> ·
+      <a href="https://github.com/mbaas2/VerBump/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a> ·
+      <a href="https://github.com/mbaas2/VerBump" target="_blank" rel="noopener">GitHub</a>
+    </p>
+    <p class="footer-note">
+      Built in collaboration with <a href="https://claude.ai" target="_blank" rel="noopener">Claude</a> (Anthropic) —
+      proof that you don't need to master a language to ship a tool in it.
     </p>
   </div>
 </footer>
