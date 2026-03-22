@@ -462,8 +462,8 @@ class DarkColorTable : ProfessionalColorTable {
             });
 
         using var form = new Form {
-            Text = $"VerBump  v{appVersion}",
-            Width = 720, Height = 80 + settings.Paths.Count * 55 + (willHaveUnsavedEntry ? 55 : 0) + 138,
+            Text = willHaveUnsavedEntry ? $"VerBump  v{appVersion}  —  {Path.GetDirectoryName(InitialVersionPath)}" : $"VerBump  v{appVersion}",
+            Width = 720, Height = 80 + (willHaveUnsavedEntry ? 1 : settings.Paths.Count) * 55 + 138,
             StartPosition = FormStartPosition.CenterScreen,
             KeyPreview = true,
             BackColor = Color.FromArgb(45, 45, 48), ForeColor = Color.White
@@ -511,7 +511,7 @@ class DarkColorTable : ProfessionalColorTable {
 
         Ph.Init(System.Reflection.Assembly.GetExecutingAssembly());
 
-        foreach (var entry in settings.Paths) {
+        foreach (var entry in willHaveUnsavedEntry ? [] : settings.Paths) {
             string cleanPath = entry.Path.Trim().TrimEnd(Path.DirectorySeparatorChar, '/');
             string vFile = Path.Combine(cleanPath, "VERSION");
             if (!File.Exists(vFile)) continue;
