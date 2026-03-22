@@ -37,7 +37,7 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "contextmenu"; Description: "Explorer-Kontextmenü: Ordner mit VerBump öffnen"; GroupDescription: "Shell-Integration:"; Flags: unchecked
-Name: "versionmenu";  Description: "Explorer-Kontextmenü: VERSION-Datei direkt erhöhen (für SemVer — Major+, Minor+, Patch+)"; GroupDescription: "Shell-Integration:"; Flags: unchecked
+Name: "versionmenu";  Description: "Explorer-Kontextmenü: VERSION-Datei in VerBump öffnen und/oder direkt erhöhen"; GroupDescription: "Shell-Integration:"; Flags: unchecked
 Name: "settingsmenu"; Description: "Explorer-Kontextmenü: settings.json direkt in VerBump öffnen";                              GroupDescription: "Shell-Integration:"; Flags: unchecked
 
 ; ── Registry (Kontextmenü) ─────────────────────────────────────────────────────
@@ -47,17 +47,23 @@ Name: "settingsmenu"; Description: "Explorer-Kontextmenü: settings.json direkt 
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\VerBump";                    ValueType: string; ValueName: "";     ValueData: "Mit VerBump öffnen";              Flags: uninsdeletekey; Tasks: contextmenu
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\VerBump";                    ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#AppExeName},0";           Tasks: contextmenu
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\VerBump\command";            ValueType: string; ValueName: "";     ValueData: """{app}\{#AppExeName}"" ""%1""";  Tasks: contextmenu
-; Kontextmenü für VERSION-Dateien (SemVer: Major+, Minor+, Patch+)
-Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                                                             ValueType: string; ValueName: "";            ValueData: "Version erhöhen (SemVer)";                                Flags: uninsdeletekey; Tasks: versionmenu
-Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                                                             ValueType: string; ValueName: "Icon";        ValueData: "{app}\{#AppExeName},0";                                   Tasks: versionmenu
-Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                                                             ValueType: string; ValueName: "SubCommands"; ValueData: "VerBump.Bump1;VerBump.Bump2;VerBump.Bump3";               Tasks: versionmenu
-Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                                                             ValueType: string; ValueName: "AppliesTo";   ValueData: "System.FileName: ""VERSION""";                           Tasks: versionmenu
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\VerBump.Bump1";                  ValueType: string; ValueName: "";            ValueData: "Major +";                                                Flags: uninsdeletekey; Tasks: versionmenu
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\VerBump.Bump1\command";          ValueType: string; ValueName: "";            ValueData: """{app}\{#AppExeName}"" ""%1"" --bump=1";                Tasks: versionmenu
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\VerBump.Bump2";                  ValueType: string; ValueName: "";            ValueData: "Minor +";                                                Flags: uninsdeletekey; Tasks: versionmenu
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\VerBump.Bump2\command";          ValueType: string; ValueName: "";            ValueData: """{app}\{#AppExeName}"" ""%1"" --bump=2";                Tasks: versionmenu
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\VerBump.Bump3";                  ValueType: string; ValueName: "";            ValueData: "Patch +";                                                Flags: uninsdeletekey; Tasks: versionmenu
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\VerBump.Bump3\command";          ValueType: string; ValueName: "";            ValueData: """{app}\{#AppExeName}"" ""%1"" --bump=3";                Tasks: versionmenu
+; Kontextmenü für VERSION-Dateien: "In VerBump öffnen"
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Open";           ValueType: string; ValueName: "";          ValueData: "In VerBump öffnen";           Flags: uninsdeletekey; Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Open";           ValueType: string; ValueName: "Icon";      ValueData: "{app}\{#AppExeName},0";       Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Open";           ValueType: string; ValueName: "AppliesTo"; ValueData: "System.FileName: ""VERSION"""; Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Open\command";   ValueType: string; ValueName: "";          ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: versionmenu
+; Kontextmenü für VERSION-Dateien: Submenu "Version erhöhen" (nested shell keys, zuverlässiger als CommandStore)
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                          ValueType: string; ValueName: "";            ValueData: "Version erhöhen (SemVer)";     Flags: uninsdeletekey; Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                          ValueType: string; ValueName: "MUIVerb";     ValueData: "Version erhöhen (SemVer)";     Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                          ValueType: string; ValueName: "Icon";        ValueData: "{app}\{#AppExeName},0";        Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                          ValueType: string; ValueName: "SubCommands"; ValueData: "";                             Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                          ValueType: string; ValueName: "AppliesTo";   ValueData: "System.FileName: ""VERSION"""; Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION\shell\Bump1";              ValueType: string; ValueName: "";            ValueData: "Major +";                      Flags: uninsdeletekey; Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION\shell\Bump1\command";      ValueType: string; ValueName: "";            ValueData: """{app}\{#AppExeName}"" ""%1"" --bump=1"; Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION\shell\Bump2";              ValueType: string; ValueName: "";            ValueData: "Minor +";                      Flags: uninsdeletekey; Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION\shell\Bump2\command";      ValueType: string; ValueName: "";            ValueData: """{app}\{#AppExeName}"" ""%1"" --bump=2"; Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION\shell\Bump3";              ValueType: string; ValueName: "";            ValueData: "Patch +";                      Flags: uninsdeletekey; Tasks: versionmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION\shell\Bump3\command";      ValueType: string; ValueName: "";            ValueData: """{app}\{#AppExeName}"" ""%1"" --bump=3"; Tasks: versionmenu
 ; Kontextmenü für settings.json (Rechtsklick auf beliebige settings.json)
 Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Settings";           ValueType: string; ValueName: "";          ValueData: "In VerBump öffnen";                                   Flags: uninsdeletekey; Tasks: settingsmenu
 Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Settings";           ValueType: string; ValueName: "Icon";      ValueData: "{app}\{#AppExeName},0";                               Tasks: settingsmenu

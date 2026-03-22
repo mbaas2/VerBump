@@ -306,11 +306,35 @@
         <li>Einstellungen öffnen (Schaltfläche <strong>Einstellungen</strong>) und Projekte hinzufügen.</li>
         <li>Jedes Projekt benötigt eine einfache Text-Datei <code>VERSION</code> im Stammverzeichnis.</li>
       </ol>
-      <p>
-        <strong>Nur ein Projekt?</strong> Rechtsklick auf eine <code>VERSION</code>-Datei im
-        Explorer und <em>Mit VerBump erhöhen</em> wählen — kein zentrales Setup nötig.
-        (Erfordert das optionale Explorer-Kontextmenü, wählbar während der Installation.)
-      </p>
+    </div>
+
+    <!-- Workflows -->
+    <div class="content mb-6">
+      <h3>Welcher Workflow passt?</h3>
+      <div class="table-container">
+        <table class="table is-bordered is-narrow">
+          <thead>
+            <tr><th>Situation</th><th>Empfohlener Ansatz</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Wenige Projekte</strong>, die man gemeinsam im Blick behalten möchte</td>
+              <td>Alle in die Standard-<code>settings.json</code> eintragen. Ein Blick zeigt alles.</td>
+            </tr>
+            <tr>
+              <td><strong>Viele Repos</strong>, aber man arbeitet immer nur an einem</td>
+              <td>Rechtsklick auf eine <code>VERSION</code>-Datei → <em>In VerBump öffnen</em>.
+                  Kein Setup nötig. Über den <strong>+</strong>-Button in der Toolbar lässt sich das Projekt
+                  bei Bedarf dauerhaft in die settings.json übernehmen.</td>
+            </tr>
+            <tr>
+              <td><strong>Zusammengehörige Projektgruppen</strong> (z. B. Backend + Mobile + Shared Lib)</td>
+              <td>Pro Gruppe eine eigene <code>settings.json</code> anlegen. Mit <em>Einstellungen öffnen…</em>
+                  in der Toolbar zwischen ihnen wechseln — die letzten werden gemerkt.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Versionsschemas -->

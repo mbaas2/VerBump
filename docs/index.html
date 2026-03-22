@@ -327,11 +327,34 @@
         <li>Open Settings (<strong>Settings</strong> button) and add your projects.</li>
         <li>Each project needs a plain-text <code>VERSION</code> file in its root directory.</li>
       </ol>
-      <p>
-        <strong>Just one project?</strong> Right-click any <code>VERSION</code> file in
-        Explorer and choose <em>Bump with VerBump</em> — no central setup needed.
-        (Requires the optional Explorer context menu, selectable during installation.)
-      </p>
+    </div>
+
+    <!-- Workflows -->
+    <div class="content mb-6">
+      <h3>Which workflow fits you?</h3>
+      <div class="table-container">
+        <table class="table is-bordered is-narrow">
+          <thead>
+            <tr><th>Situation</th><th>Recommended approach</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>A handful of projects</strong> you version together</td>
+              <td>Add them all to the default <code>settings.json</code>. One glance shows everything.</td>
+            </tr>
+            <tr>
+              <td><strong>Many repos</strong>, but you only touch one at a time</td>
+              <td>Right-click any <code>VERSION</code> file → <em>Open in VerBump</em>.
+                  No setup needed. Optionally save it to settings via the <strong>+</strong> toolbar button.</td>
+            </tr>
+            <tr>
+              <td><strong>Related project groups</strong> (e.g. a backend + mobile + shared lib)</td>
+              <td>Create one <code>settings.json</code> per group. Use the <em>Open settings…</em>
+                  toolbar button to switch between them — the last few are remembered.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Version schemes -->

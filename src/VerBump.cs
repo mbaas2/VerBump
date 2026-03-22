@@ -152,6 +152,7 @@ public static class Ph {
     public const string EyeSlash    = "\ue224";
     public const string CheckCircle = "\ue184";
     public const string FolderOpen  = "\ue248";
+    public const string Plus        = "\ue334";
 
     public static void Init(System.Reflection.Assembly asm) {
         LoadFont(asm, "VerBump.Phosphor.ttf",     ref _family);
@@ -310,6 +311,7 @@ public static class VerBump {
         public ProjectEntry Entry;
         public bool?       HasIssues;   // null = noch am Scannen
         public string      StaleInfo;   // Tooltip-Text wenn veraltet
+        public bool        IsUnsaved;   // true = via Kontextmenü geöffnet, noch nicht in settings.json
     }
 
 class DarkColorTable : ProfessionalColorTable {
@@ -449,9 +451,19 @@ class DarkColorTable : ProfessionalColorTable {
             // VERSION is stale → fall through and show the main UI
         }
 
+        // Prüfen ob InitialVersionPath nicht in settings.json ist → unsaved entry
+        bool willHaveUnsavedEntry = InitialVersionPath != null &&
+            File.Exists(InitialVersionPath) &&
+            !(settings.Paths ?? []).Any(p => {
+                try { return string.Equals(
+                    Path.GetFullPath(Path.Combine(p.Path.Trim().TrimEnd(Path.DirectorySeparatorChar, '/'), "VERSION")),
+                    Path.GetFullPath(InitialVersionPath), StringComparison.OrdinalIgnoreCase); }
+                catch { return false; }
+            });
+
         using var form = new Form {
             Text = $"VerBump  v{appVersion}",
-            Width = 720, Height = 80 + settings.Paths.Count * 55 + 138,
+            Width = 720, Height = 80 + settings.Paths.Count * 55 + (willHaveUnsavedEntry ? 55 : 0) + 138,
             StartPosition = FormStartPosition.CenterScreen,
             KeyPreview = true,
             BackColor = Color.FromArgb(45, 45, 48), ForeColor = Color.White
@@ -611,10 +623,70 @@ class DarkColorTable : ProfessionalColorTable {
         }
 
         // ── Pre-select project from command-line VERSION path ──────────────────
-        if (InitialVersionPath != null) {
+        if (InitialVersionPath != null && !willHaveUnsavedEntry) {
             string target = Path.GetFullPath(InitialVersionPath);
             int idx = uiEntries.FindIndex(u => string.Equals(Path.GetFullPath(u.FilePath), target, StringComparison.OrdinalIgnoreCase));
             if (idx >= 0) selectedIndex = idx;
+        }
+
+        // ── Unsaved entry: InitialVersionPath nicht in settings.json ───────────
+        if (willHaveUnsavedEntry) {
+            string target    = Path.GetFullPath(InitialVersionPath);
+            string cleanPath = Path.GetDirectoryName(target);
+            string currentV  = File.ReadAllText(target).Trim();
+            string projectName = Path.GetFileName(cleanPath) ?? target;
+            var entry = new ProjectEntry { Path = cleanPath, Scheme = "semver", ResetOnBump = true };
+            IVersionScheme scheme = SchemeFactory.Create(entry);
+
+            var selectionPanel = new Panel { Width = 680, Height = 50, Margin = new Padding(0, 3, 0, 3), BackColor = Color.Transparent };
+            var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 1, Padding = new Padding(3) };
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 42F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 22F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            int hotkeyIndex = uiEntries.Count;
+            string hotkeyChar = hotkeyIndex < 26 ? ((char)('A' + hotkeyIndex)).ToString()
+                              : hotkeyIndex < 36 ? ((char)('0' + hotkeyIndex - 26)).ToString()
+                              : "";
+            var lblHotkey = new Label { Text = hotkeyChar, Width = 18, Height = 44,
+                Font = new Font("Segoe UI", 8F), ForeColor = Color.FromArgb(130, 130, 140),
+                TextAlign = ContentAlignment.MiddleCenter };
+            var lbl = new Label { Text = projectName, Width = 172, Height = 44,
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
+            var tb = new TextBox { Text = currentV, Width = 110, Height = 23, Margin = new Padding(0, 10, 0, 0),
+                BackColor = Color.FromArgb(60, 60, 60), ForeColor = Color.White,
+                BorderStyle = BorderStyle.FixedSingle, Font = new Font("Consolas", 10F) };
+            int entryIndex = uiEntries.Count;
+            tb.Enter   += (s, e) => { selectedIndex = entryIndex; updateSelection(); };
+            tb.KeyDown += (s, e) => {
+                if (e.KeyCode == Keys.Return) { e.Handled = true; e.SuppressKeyPress = true; btnOk.PerformClick(); }
+                if (e.KeyCode == Keys.Escape) { e.Handled = true; e.SuppressKeyPress = true; btnCan.PerformClick(); }
+            };
+            var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5, 5, 0, 0) };
+            var labels = scheme.GetButtonLabels();
+            for (int i = 0; i < labels.Count; i++) {
+                if (labels[i] == null) continue;
+                int partIndex = i; var tbC = tb; var schC = scheme;
+                var btn = new Button { Text = labels[i] + "+", Width = 70, Height = 28,
+                    FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(70, 70, 70), Font = new Font("Segoe UI", 8F) };
+                btn.Click += (s, e) => { selectedIndex = entryIndex; updateSelection(); tbC.Text = schC.Bump(tbC.Text.Trim(), partIndex); tbC.BackColor = Color.DarkGreen; };
+                buttonPanel.Controls.Add(btn);
+            }
+            var iconBox = new PictureBox { Width = 36, Height = 36, Margin = new Padding(0, 7, 0, 0),
+                SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.Transparent, Visible = false };
+            table.Controls.Add(iconBox, 0, 0);
+            table.Controls.Add(lblHotkey, 1, 0);
+            table.Controls.Add(lbl, 2, 0);
+            table.Controls.Add(tb, 3, 0);
+            table.Controls.Add(buttonPanel, 4, 0);
+            var strip = new Panel { Width = 5, Dock = DockStyle.Left, BackColor = Color.FromArgb(80, 130, 200), Cursor = Cursors.Default };
+            selectionPanel.Controls.Add(strip);
+            selectionPanel.Controls.Add(table);
+            mainPanel.Controls.Add(selectionPanel);
+            uiEntries.Add(new ProjectUI { SelectionPanel = selectionPanel, StatusStrip = strip, VersionBox = tb,
+                FilePath = target, OriginalVersion = currentV, Scheme = scheme, Backup = false, Entry = entry, IsUnsaved = true });
+            selectedIndex = uiEntries.Count - 1;
         }
 
         if (uiEntries.Count == 0) {
@@ -698,6 +770,14 @@ class DarkColorTable : ProfessionalColorTable {
             Checked     = true,
         };
 
+        var tsAddProject = new ToolStripButton(L.T("toolbar.add_project")) {
+            ForeColor = Color.White,
+            Image = Ph.ToBitmap(Ph.Plus, 13F, Color.FromArgb(80, 200, 120)),
+            TextImageRelation = TextImageRelation.ImageBeforeText,
+            ToolTipText = L.T("toolbar.add_project_tip"),
+            Visible = willHaveUnsavedEntry,
+        };
+
         toolStrip.Items.Add(tsSettings);
         toolStrip.Items.Add(tsLoadSettings);
         toolStrip.Items.Add(tsSep);
@@ -705,6 +785,10 @@ class DarkColorTable : ProfessionalColorTable {
         toolStrip.Items.Add(new ToolStripSeparator());
         toolStrip.Items.Add(tsFilterOrange);
         toolStrip.Items.Add(tsFilterGreen);
+        if (willHaveUnsavedEntry) {
+            toolStrip.Items.Add(new ToolStripSeparator());
+            toolStrip.Items.Add(tsAddProject);
+        }
 
         tsSettings.Click += (s, e) => ShowSettingsDialog(form, settings, jsonPath);
 
@@ -763,6 +847,7 @@ class DarkColorTable : ProfessionalColorTable {
                     setStatus($"{L.T("status.scheme", uiEntries[i].Entry.Scheme)}   {string.Join("  ", schemeNames)}   {backupStatus}", false);
                 }
             }
+            tsAddProject.Visible = selectedIndex >= 0 && selectedIndex < uiEntries.Count && uiEntries[selectedIndex].IsUnsaved;
         };
 
         applyFilter = () => {
@@ -789,6 +874,23 @@ class DarkColorTable : ProfessionalColorTable {
             showGreen = !showGreen;
             tsFilterGreen.Image = FilterIcon(Ph.CheckCircle, showGreen ? colGreen : colDim);
             applyFilter();
+        };
+
+        tsAddProject.Click += (s, e) => {
+            if (selectedIndex < 0 || selectedIndex >= uiEntries.Count) return;
+            var ui = uiEntries[selectedIndex];
+            if (!ui.IsUnsaved) return;
+            settings.Paths.Add(ui.Entry);
+            try {
+                File.WriteAllText(jsonPath, JsonSerializer.Serialize(settings,
+                    new JsonSerializerOptions { WriteIndented = true }));
+                ui.IsUnsaved = false;
+                ui.StatusStrip.BackColor = Color.FromArgb(80, 80, 80);
+                tsAddProject.Visible = false;
+                setStatus(L.T("toolbar.add_project_ok"), false);
+            } catch (Exception ex) {
+                setStatus(L.T("error.save", ex.Message), true);
+            }
         };
 
         statusTimer.Tick += (s, e) => {
