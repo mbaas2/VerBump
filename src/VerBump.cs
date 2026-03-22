@@ -296,8 +296,26 @@ class DarkColorTable : ProfessionalColorTable {
         public override Color ImageMarginGradientEnd          => Bg;
     }
 
+    static string OverrideSettingsPath = null;
+    static string InitialVersionPath   = null;
+
     [STAThread]
-    public static void Main() {
+    public static void Main(string[] args) {
+        foreach (var arg in args) {
+            if (arg.StartsWith("/settings=", StringComparison.OrdinalIgnoreCase) ||
+                arg.StartsWith("--settings=", StringComparison.OrdinalIgnoreCase)) {
+                OverrideSettingsPath = arg[(arg.IndexOf('=') + 1)..].Trim('"');
+            } else {
+                // bare path → VERSION file or directory containing one
+                string p = arg.Trim('"');
+                if (File.Exists(p) && Path.GetFileName(p).Equals("VERSION", StringComparison.OrdinalIgnoreCase))
+                    InitialVersionPath = p;
+                else if (Directory.Exists(p)) {
+                    string v = Path.Combine(p, "VERSION");
+                    if (File.Exists(v)) InitialVersionPath = v;
+                }
+            }
+        }
         SetForegroundWindow(System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
@@ -322,7 +340,7 @@ class DarkColorTable : ProfessionalColorTable {
             }
         } catch (Exception ex) { Log.Write("Run/version", ex); }
 
-        string jsonPath = Path.Combine(appDataDir, "VerBump-settings.json");
+        string jsonPath = OverrideSettingsPath ?? Path.Combine(appDataDir, "VerBump-settings.json");
         if (!File.Exists(jsonPath)) {
             var dummy = new Settings {
                 IgnoreDirs  = [..DefaultIgnoreDirs],
@@ -521,6 +539,13 @@ class DarkColorTable : ProfessionalColorTable {
             selectionPanel.Controls.Add(table);
             mainPanel.Controls.Add(selectionPanel);
             uiEntries.Add(new ProjectUI { SelectionPanel = selectionPanel, StatusStrip = strip, InfoIcon = infoIcon, VersionBox = tb, FilePath = vFile, OriginalVersion = currentV, Scheme = scheme, Backup = entry.Backup, Entry = entry });
+        }
+
+        // ── Pre-select project from command-line VERSION path ──────────────────
+        if (InitialVersionPath != null) {
+            string target = Path.GetFullPath(InitialVersionPath);
+            int idx = uiEntries.FindIndex(u => string.Equals(Path.GetFullPath(u.FilePath), target, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0) selectedIndex = idx;
         }
 
         if (uiEntries.Count == 0) {
