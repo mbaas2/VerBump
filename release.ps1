@@ -101,8 +101,7 @@ if (Test-Path $NextNotes) {
 $ghArgs = @(
     "release", "create", "v$Version",
     $Installer,
-    "--title", "VerBump v$Version",
-    "--tag",   "v$Version"
+    "--title", "VerBump v$Version"
 )
 if ($Notes -ne "") {
     $ghArgs += @("--notes", $Notes)
