@@ -37,6 +37,12 @@
 
     /* ── Scheme table ── */
     .scheme-table td:first-child { font-family: monospace; white-space: nowrap; }
+
+    /* ── Why section ── */
+    .why-section { background: rgba(0,0,0,.035); }
+    .why-quote   { border-left: 4px solid #48c78e; padding: 2rem 2.5rem; }
+    .why-quote p { line-height: 1.75; }
+    .why-attr    { margin-top: 1rem; font-size: .9rem; }
   </style>
 </head>
 <body>
@@ -91,6 +97,34 @@
       <p class="has-text-grey mt-4" style="font-size:.85rem">
         Windows 10/11 · Self-contained · No installer required · Free &amp; open source
       </p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ WHY ══════════════════════════════════════════════════════════════════ -->
+<section class="section why-section">
+  <div class="container">
+    <div class="columns is-centered">
+      <div class="column is-8">
+        <h2 class="title is-3 has-text-centered mb-5">Why VerBump?</h2>
+        <div class="box why-quote">
+          <p class="is-size-5 mb-4">
+            I work on a <em>lot</em> of projects in parallel and I've tried just about every
+            versioning approach out there. But no matter the setup, there's always a manual
+            step at the end of the chain — and in the heat of the moment, I keep forgetting it.
+          </p>
+          <p class="is-size-5 mb-4">
+            Being fundamentally lazy, I decided to solve this once and for all.
+            Now, before every <code>git push</code>, I open VerBump and see the status
+            of all my repos at a glance — orange means something changed and the version
+            hasn't been bumped yet.
+          </p>
+          <p class="is-size-5">
+            It saves me more worry, rework, and time than I spent building it.
+          </p>
+          <p class="why-attr has-text-grey">— Michael Baas, creator of VerBump</p>
+        </div>
+      </div>
     </div>
   </div>
 </section>
