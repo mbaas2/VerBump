@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build:*)",
+      "Bash(dotnet --list-sdks)",
+      "Bash(dotnet publish:*)",
+      "Read(//c/Users/mb/Downloads/phosphor-icons/Fonts/regular/**)",
+      "Bash(gh --version)",
+      "Bash(gh auth:*)",
+      "Bash(gh repo:*)"
+    ],
+    "additionalDirectories": [
+      "c:\\Git\\VerBump",
+      "c:\\Users\\mb\\Downloads\\phosphor-icons\\Fonts\\regular"
+    ]
+  }
+}

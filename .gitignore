@@ -1,0 +1,5 @@
+src/bin/
+src/obj/
+*.user
+.DS_Store
+Thumbs.db
