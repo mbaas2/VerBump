@@ -7,11 +7,27 @@
       "Read(//c/Users/mb/Downloads/phosphor-icons/Fonts/regular/**)",
       "Bash(gh --version)",
       "Bash(gh auth:*)",
-      "Bash(gh repo:*)"
+      "Bash(gh repo:*)",
+      "Bash(gh api:*)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(gh release:*)",
+      "Bash(\"c:/devt/VerBump/doc/WebApp/VERSION\")",
+      "Bash(\"c:/devt/VerBump/doc/MobileClient/VERSION\")",
+      "Bash(\"c:/devt/VerBump/doc/ApiServer/VERSION\")",
+      "Bash(\"c:/devt/VerBump/doc/SharedLib/VERSION\")",
+      "Bash(cmd.exe /c \"pwsh -NoProfile -Command \"\"$font = [System.IO.File]::ReadAllBytes\\(''C:\\\\Users\\\\mb\\\\Downloads\\\\phosphor-icons\\\\Fonts\\\\regular\\\\Phosphor.ttf''\\); Write-Host \\(''Font bytes: '' + $font.Length\\)\"\"\")",
+      "Bash(cmd.exe /c \"pwsh -NoProfile -File C:\\\\Temp\\\\findfont.ps1\")",
+      "Bash(cmd.exe /c \"python C:\\\\Temp\\\\readcmap.py 2>&1\")",
+      "Bash(cmd.exe /c \"dir C:\\\\Git\\\\VerBump\\\\src\\\\*.ttf\")",
+      "Bash(dotnet run:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ],
     "additionalDirectories": [
       "c:\\Git\\VerBump",
-      "c:\\Users\\mb\\Downloads\\phosphor-icons\\Fonts\\regular"
+      "c:\\Users\\mb\\Downloads\\phosphor-icons\\Fonts\\regular",
+      "c:\\Temp"
     ]
   }
 }

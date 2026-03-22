@@ -529,11 +529,10 @@ class DarkColorTable : ProfessionalColorTable {
                 if (e.KeyCode == Keys.Escape) { e.Handled = true; e.SuppressKeyPress = true; btnCan.PerformClick(); }
             };
 
-            var infoIcon = new Label {
+            var infoIcon = new PictureBox {
                 Visible = false, Dock = DockStyle.Fill,
-                Text = Ph.Info, Font = Ph.Font(16F),
-                TextAlign = ContentAlignment.MiddleCenter,
-                ForeColor = Color.FromArgb(255, 140, 0),
+                Image = Ph.ToBitmap(Ph.Warning, 20F, Color.FromArgb(255, 140, 0), bold: true),
+                SizeMode = PictureBoxSizeMode.CenterImage,
                 BackColor = Color.Transparent,
                 Cursor = Cursors.Help,
             };
