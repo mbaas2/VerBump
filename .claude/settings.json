@@ -23,7 +23,12 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(powershell.exe -ExecutionPolicy Bypass -File release.ps1)"
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File release.ps1)",
+      "Bash(ls src/*.ttf src/*.TTF)",
+      "Read(//c/Users/mb/AppData/Roaming/VerBump//**)",
+      "Bash(start \"\" \"C:\\\\Git\\\\VerBump\\\\src\\\\bin\\\\Release\\\\net8.0-windows\\\\win-x64\\\\publish\\\\VerBump.exe\" \"C:\\\\Git\\\\VerBump\")",
+      "Bash(start \"\" \"C:\\\\Git\\\\VerBump\\\\src\\\\bin\\\\Release\\\\net8.0-windows\\\\win-x64\\\\publish\\\\VerBump.exe\" \"C:\\\\Git\\\\VerBump\\\\src\\\\VERSION\")",
+      "Bash(/c/Git/VerBump/src/bin/Release/net8.0-windows/win-x64/publish/VerBump.exe \"C:/Git/VerBump/src/VERSION\")"
     ],
     "additionalDirectories": [
       "c:\\Git\\VerBump",
