@@ -19,6 +19,7 @@
   "status.shortcut":        "Strg+{0}={1}",
   "status.backup_on":       "Backup: [X]",
   "status.backup_off":      "Backup: [ ]",
+  "status.ok":              "VERSION ist aktuell.",
   "project.unnamed":        "Unbenannt",
   "editor.title":           "Editor wählen",
   "editor.prompt":          "Befehl oder Pfad zum Editor (z. B. code, notepad++, gedit):",

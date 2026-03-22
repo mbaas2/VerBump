@@ -37,7 +37,8 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "contextmenu"; Description: "Explorer-Kontextmenü: Ordner mit VerBump öffnen"; GroupDescription: "Shell-Integration:"; Flags: unchecked
-Name: "versionmenu"; Description: "Explorer-Kontextmenü: VERSION-Datei direkt erhöhen (für SemVer — Major+, Minor+, Patch+)"; GroupDescription: "Shell-Integration:"; Flags: unchecked
+Name: "versionmenu";  Description: "Explorer-Kontextmenü: VERSION-Datei direkt erhöhen (für SemVer — Major+, Minor+, Patch+)"; GroupDescription: "Shell-Integration:"; Flags: unchecked
+Name: "settingsmenu"; Description: "Explorer-Kontextmenü: settings.json direkt in VerBump öffnen";                              GroupDescription: "Shell-Integration:"; Flags: unchecked
 
 ; ── Registry (Kontextmenü) ─────────────────────────────────────────────────────
 
@@ -57,6 +58,11 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\CommandS
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\VerBump.Bump2\command";          ValueType: string; ValueName: "";            ValueData: """{app}\{#AppExeName}"" ""%1"" --bump=2";                Tasks: versionmenu
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\VerBump.Bump3";                  ValueType: string; ValueName: "";            ValueData: "Patch +";                                                Flags: uninsdeletekey; Tasks: versionmenu
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\VerBump.Bump3\command";          ValueType: string; ValueName: "";            ValueData: """{app}\{#AppExeName}"" ""%1"" --bump=3";                Tasks: versionmenu
+; Kontextmenü für settings.json (Rechtsklick auf beliebige settings.json)
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Settings";           ValueType: string; ValueName: "";          ValueData: "In VerBump öffnen";                                   Flags: uninsdeletekey; Tasks: settingsmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Settings";           ValueType: string; ValueName: "Icon";      ValueData: "{app}\{#AppExeName},0";                               Tasks: settingsmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Settings";           ValueType: string; ValueName: "AppliesTo"; ValueData: "System.FileName: ""settings.json""";                 Tasks: settingsmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Settings\command";   ValueType: string; ValueName: "";          ValueData: """{app}\{#AppExeName}"" --settings=""%1""";          Tasks: settingsmenu
 ; Kontextmenü für Ordner-Hintergrund (Rechtsklick im Ordner)
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\VerBump";         ValueType: string; ValueName: "";     ValueData: "Mit VerBump öffnen";              Flags: uninsdeletekey; Tasks: contextmenu
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\VerBump";         ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#AppExeName},0";           Tasks: contextmenu
@@ -69,8 +75,8 @@ Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\VerBump\command
 Source: "{#PublishDir}\{#AppExeName}";  DestDir: "{app}"; Flags: ignoreversion
 
 ; Sprachdateien
-Source: "{#PublishDir}\lang.de.json";   DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PublishDir}\lang.en.json";   DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\lang.de.json";    DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\lang.en.json";    DestDir: "{app}"; Flags: ignoreversion
 
 ; VerBump-settings.json wird beim ersten Start automatisch in %APPDATA%\VerBump\ erstellt
 

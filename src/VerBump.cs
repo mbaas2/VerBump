@@ -181,6 +181,25 @@ public static class Ph {
         : _family   != null ? new Font(_family, size, FontStyle.Bold)
         : new Font("Segoe UI Symbol", size, FontStyle.Bold);
 
+    public static Bitmap WarningBitmap(int px, Color color) {
+        var bmp = new Bitmap(px, px);
+        using var g = Graphics.FromImage(bmp);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        var pts = new[] {
+            new PointF(px / 2f,    1),
+            new PointF(px - 1,     px - 1),
+            new PointF(1,          px - 1),
+        };
+        using var fill = new SolidBrush(color);
+        g.FillPolygon(fill, pts);
+        // Ausrufezeichen (dunkel, zentriert)
+        using var excl = new SolidBrush(Color.FromArgb(200, 20, 20, 20));
+        float cx = px / 2f;
+        g.FillRectangle(excl, cx - 1.5f, px * 0.38f, 3, px * 0.30f);
+        g.FillEllipse(excl,   cx - 1.5f, px * 0.73f, 3, 3);
+        return bmp;
+    }
+
     public static Bitmap ToBitmap(string glyph, float size, Color color, bool bold = false) {
         int px  = (int)Math.Ceiling(size * 2);
         var bmp = new Bitmap(px, px);
@@ -202,9 +221,22 @@ public static class L {
 
     public static void Load(string baseDir) {
         string lang = WindowsUILanguage();
-        string path = Path.Combine(baseDir, $"lang.{lang}.json");
-        if (!File.Exists(path)) { lang = "en"; path = Path.Combine(baseDir, "lang.en.json"); }
-        if (!File.Exists(path)) return;
+        string Find(string l) {
+            foreach (var dir in new[] {
+                baseDir,
+                Path.GetDirectoryName(Environment.ProcessPath),
+                AppContext.BaseDirectory,
+                AppDomain.CurrentDomain.BaseDirectory,
+            }) {
+                if (dir == null) continue;
+                var p = Path.Combine(dir, $"lang.{l}.json");
+                if (File.Exists(p)) return p;
+            }
+            return null;
+        }
+        string path = Find(lang) ?? Find("en");
+        if (path == null) return;
+        if (!path.Contains($"lang.{lang}.json")) lang = "en";
         try {
             _d = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path)) ?? new();
             Lang = lang;
@@ -263,7 +295,6 @@ public static class VerBump {
     public class ProjectUI {
         public Panel       SelectionPanel;
         public Panel       StatusStrip;
-        public Control     InfoIcon;
         public TextBox     VersionBox;
         public string      FilePath;
         public string      OriginalVersion;
@@ -271,6 +302,7 @@ public static class VerBump {
         public bool        Backup;
         public ProjectEntry Entry;
         public bool?       HasIssues;   // null = noch am Scannen
+        public string      StaleInfo;   // Tooltip-Text wenn veraltet
     }
 
 class DarkColorTable : ProfessionalColorTable {
@@ -498,7 +530,6 @@ class DarkColorTable : ProfessionalColorTable {
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172F));  // Name
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120F));  // Version
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));   // Buttons
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 28F));   // Info
 
             int hotkeyIndex = uiEntries.Count;
             string hotkeyChar = hotkeyIndex < 26 ? ((char)('A' + hotkeyIndex)).ToString()
@@ -529,13 +560,6 @@ class DarkColorTable : ProfessionalColorTable {
                 if (e.KeyCode == Keys.Escape) { e.Handled = true; e.SuppressKeyPress = true; btnCan.PerformClick(); }
             };
 
-            var infoIcon = new PictureBox {
-                Visible = false, Dock = DockStyle.Fill,
-                Image = Ph.ToBitmap(Ph.Warning, 20F, Color.FromArgb(255, 140, 0), bold: true),
-                SizeMode = PictureBoxSizeMode.CenterImage,
-                BackColor = Color.Transparent,
-                Cursor = Cursors.Help,
-            };
             var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5, 5, 0, 0) };
             var labels = scheme.GetButtonLabels();
             for (int i = 0; i < labels.Count; i++) {
@@ -572,12 +596,11 @@ class DarkColorTable : ProfessionalColorTable {
             table.Controls.Add(lbl,       2, 0);
             table.Controls.Add(tb,        3, 0);
             table.Controls.Add(buttonPanel, 4, 0);
-            table.Controls.Add(infoIcon,  5, 0);
-            var strip = new Panel { Width = 5, Dock = DockStyle.Left, BackColor = Color.FromArgb(80, 80, 80) };
+            var strip = new Panel { Width = 5, Dock = DockStyle.Left, BackColor = Color.FromArgb(80, 80, 80), Cursor = Cursors.Help };
             selectionPanel.Controls.Add(strip);
             selectionPanel.Controls.Add(table);
             mainPanel.Controls.Add(selectionPanel);
-            uiEntries.Add(new ProjectUI { SelectionPanel = selectionPanel, StatusStrip = strip, InfoIcon = infoIcon, VersionBox = tb, FilePath = vFile, OriginalVersion = currentV, Scheme = scheme, Backup = entry.Backup, Entry = entry });
+            uiEntries.Add(new ProjectUI { SelectionPanel = selectionPanel, StatusStrip = strip, VersionBox = tb, FilePath = vFile, OriginalVersion = currentV, Scheme = scheme, Backup = entry.Backup, Entry = entry });
         }
 
         // ── Pre-select project from command-line VERSION path ──────────────────
@@ -770,6 +793,18 @@ class DarkColorTable : ProfessionalColorTable {
             if (e.KeyCode == Keys.Escape) { e.Handled = true; e.SuppressKeyPress = true; btnCan.PerformClick(); return; }
             if (e.KeyCode == Keys.Return) { e.Handled = true; e.SuppressKeyPress = true; btnOk.PerformClick(); return; }
 
+            if (e.Control && e.KeyCode == Keys.I) {
+                e.Handled = true; e.SuppressKeyPress = true;
+                if (selectedIndex >= 0 && selectedIndex < uiEntries.Count) {
+                    var ui = uiEntries[selectedIndex];
+                    string tip = ui.StaleInfo;
+                    if (!string.IsNullOrEmpty(tip))
+                        MessageBox.Show(tip, ui.FilePath, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    else if (ui.HasIssues == false)
+                        MessageBox.Show(L.T("status.ok"), ui.FilePath, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                return;
+            }
             if (e.Control && e.KeyCode == Keys.Home) {
                 selectedIndex = 0; updateSelection(); e.Handled = true; return;
             }
@@ -815,6 +850,27 @@ class DarkColorTable : ProfessionalColorTable {
             form.TopMost = false;
             updateSelection();
 
+            // ── Update-Check (feuert im Hintergrund, blockiert nichts) ────────────
+            Task.Run(async () => {
+                try {
+                    using var http = new System.Net.Http.HttpClient();
+                    http.Timeout = TimeSpan.FromSeconds(8);
+                    http.DefaultRequestHeaders.UserAgent.ParseAdd("VerBump/" + appVersion);
+                    var json = await http.GetStringAsync(
+                        "https://api.github.com/repos/mbaas2/VerBump/releases/latest");
+                    using var doc  = System.Text.Json.JsonDocument.Parse(json);
+                    string tag     = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
+                    string latest  = tag.TrimStart('v');
+                    if (Version.TryParse(latest, out var vLatest) &&
+                        Version.TryParse(appVersion, out var vCurrent) &&
+                        vLatest > vCurrent) {
+                        string url = doc.RootElement.GetProperty("html_url").GetString() ?? "";
+                        form.BeginInvoke(new Action(() =>
+                            ShowUpdateToast(form, latest, url)));
+                    }
+                } catch { /* kein Netz, kein Problem */ }
+            });
+
             int total = uiEntries.Count;
             int done  = 0;
             foreach (var ui in uiEntries) {
@@ -833,13 +889,17 @@ class DarkColorTable : ProfessionalColorTable {
                         if (newerFiles.Count > 0) {
                             uiCaptured.HasIssues = true;
                             uiCaptured.StatusStrip.BackColor = Color.FromArgb(255, 140, 0);
-                            uiCaptured.InfoIcon.Visible = true;
+                            uiCaptured.StatusStrip.Width = 8;
                             string tip = $"{newerFiles.Count} Datei(en) neuer als VERSION:\n" +
                                          string.Join("\n", newerFiles);
-                            toolTip.SetToolTip(uiCaptured.InfoIcon, tip);
+                            uiCaptured.StaleInfo = tip;
+                            toolTip.SetToolTip(uiCaptured.StatusStrip, tip);
                         } else {
                             uiCaptured.HasIssues = false;
+                            uiCaptured.StaleInfo  = null;
                             uiCaptured.StatusStrip.BackColor = Color.FromArgb(0, 170, 80);
+                            uiCaptured.StatusStrip.Width = 5;
+                            toolTip.SetToolTip(uiCaptured.StatusStrip, null);
                         }
                         done++;
                         applyFilter();
@@ -1298,6 +1358,43 @@ class DarkColorTable : ProfessionalColorTable {
             : Path.GetFileName(Path.GetDirectoryName(versionFile)) ?? "?";
 
         ShowToast($"{current}  →  {next}", projectName);
+    }
+
+    static void ShowUpdateToast(Form owner, string latest, string url) {
+        var colBg  = Color.FromArgb(28, 28, 40);
+        var colFg  = Color.FromArgb(72, 199, 142);
+        var colDim = Color.FromArgb(160, 160, 180);
+        var screen = Screen.FromControl(owner).WorkingArea;
+
+        var toast = new Form {
+            FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.Manual,
+            BackColor = colBg, Width = 320, Height = 64, TopMost = true, ShowInTaskbar = false,
+        };
+        toast.Location = new Point(screen.Right - toast.Width - 12, screen.Bottom - toast.Height - 12);
+
+        new Label {
+            Parent = toast, Left = 12, Top = 8, Width = 296, Height = 18, ForeColor = colFg,
+            Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+            Text = $"VerBump {latest} verfügbar",
+        };
+        var lnk = new LinkLabel {
+            Parent = toast, Left = 12, Top = 32, Width = 200, Height = 18,
+            Font = new Font("Segoe UI", 8.5F), ForeColor = colDim, LinkColor = Color.FromArgb(100, 210, 255),
+            Text = "Zum Download →",
+        };
+        lnk.LinkClicked += (s, e) => {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
+            toast.Close();
+        };
+        new Label {
+            Parent = toast, Left = 295, Top = 4, Width = 20, Height = 16,
+            ForeColor = colDim, Font = new Font("Segoe UI", 8F), Text = "✕", Cursor = Cursors.Hand,
+        }.Click += (s, e) => toast.Close();
+
+        toast.Show(owner);
+        var t = new System.Windows.Forms.Timer { Interval = 8000 };
+        t.Tick += (s, e) => { t.Stop(); if (!toast.IsDisposed) toast.Close(); };
+        t.Start();
     }
 
     static void ShowToast(string message, string project) {

@@ -22,7 +22,8 @@
       "Bash(dotnet run:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File release.ps1)"
     ],
     "additionalDirectories": [
       "c:\\Git\\VerBump",
