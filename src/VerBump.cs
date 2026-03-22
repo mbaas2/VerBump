@@ -1066,7 +1066,7 @@ class DarkColorTable : ProfessionalColorTable {
 
         using var dlg = new Form {
             Text            = L.T("info.title"),
-            Width           = 360, Height = 348,
+            Width           = 360, Height = 362,
             StartPosition   = FormStartPosition.CenterParent,
             BackColor       = bgMid, ForeColor = fgW,
             FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -1139,15 +1139,15 @@ class DarkColorTable : ProfessionalColorTable {
             BackColor = Color.FromArgb(70, 70, 75),
         };
 
-        // ── Copyright + mail ───────────────────────────────────────────────────
+        // ── Copyright ─────────────────────────────────────────────────────────
         new Label {
             Parent = dlg, Text = $"© {DateTime.Today.Year} Michael Baas",
-            Left = 24, Top = 269, Width = 150, Height = 18,
+            Left = 24, Top = 267, Width = 200, Height = 18,
             Font = new Font("Segoe UI", 8F), ForeColor = fgDim,
         };
         var lnkMail = new LinkLabel {
             Parent = dlg, Text = "✉ verbump@mbaas.de",
-            Left = 176, Top = 269, Width = 142, Height = 18,
+            Left = 24, Top = 285, Width = 200, Height = 18,
             Font = new Font("Segoe UI", 8F), BackColor = Color.Transparent,
             LinkColor = fgDim, ActiveLinkColor = Color.White,
         };
@@ -1158,7 +1158,7 @@ class DarkColorTable : ProfessionalColorTable {
 
         // ── Close button ──────────────────────────────────────────────────────
         var btnClose = new Button {
-            Parent = dlg, Text = "OK", Left = 244, Top = 262, Width = 74, Height = 28,
+            Parent = dlg, Text = "OK", Left = 244, Top = 270, Width = 74, Height = 28,
             FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(60, 60, 65),
             ForeColor = fgW, Font = fUI, DialogResult = DialogResult.OK,
         };
