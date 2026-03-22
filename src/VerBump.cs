@@ -151,6 +151,7 @@ public static class Ph {
     public const string Eye         = "\ue220";
     public const string EyeSlash    = "\ue224";
     public const string CheckCircle = "\ue184";
+    public const string FolderOpen  = "\ue248";
 
     public static void Init(System.Reflection.Assembly asm) {
         LoadFont(asm, "VerBump.Phosphor.ttf",     ref _family);
@@ -298,6 +299,8 @@ class DarkColorTable : ProfessionalColorTable {
 
     static string OverrideSettingsPath = null;
     static string InitialVersionPath   = null;
+    static int    SilentBumpPart       = -1;   // 0-based; -1 = no silent bump
+    static bool   CheckMode            = false;
 
     [STAThread]
     public static void Main(string[] args) {
@@ -305,6 +308,11 @@ class DarkColorTable : ProfessionalColorTable {
             if (arg.StartsWith("/settings=", StringComparison.OrdinalIgnoreCase) ||
                 arg.StartsWith("--settings=", StringComparison.OrdinalIgnoreCase)) {
                 OverrideSettingsPath = arg[(arg.IndexOf('=') + 1)..].Trim('"');
+            } else if (arg.StartsWith("--bump=", StringComparison.OrdinalIgnoreCase)) {
+                if (int.TryParse(arg[7..], out int b) && b >= 1 && b <= 4)
+                    SilentBumpPart = b - 1;
+            } else if (arg.Equals("--check", StringComparison.OrdinalIgnoreCase)) {
+                CheckMode = true;
             } else {
                 // bare path → VERSION file or directory containing one
                 string p = arg.Trim('"');
@@ -325,7 +333,8 @@ class DarkColorTable : ProfessionalColorTable {
     public static void Run() {
         try { SetCurrentProcessExplicitAppUserModelID("VerBump.1.0"); } catch (Exception ex) { Log.Write("Run/AppUserModelID", ex); }
 
-        string baseDir    = AppDomain.CurrentDomain.BaseDirectory;
+        // Environment.ProcessPath gibt den echten EXE-Pfad zurück (auch bei Single-File-Publish)
+        string baseDir    = Path.GetDirectoryName(Environment.ProcessPath) ?? AppDomain.CurrentDomain.BaseDirectory;
         string appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VerBump");
         Directory.CreateDirectory(appDataDir);
         Log.Init(appDataDir);
@@ -371,6 +380,35 @@ class DarkColorTable : ProfessionalColorTable {
         Settings settings;
         try { settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(jsonPath), new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) ?? new Settings(); }
         catch (Exception ex) { Log.Write("Run/json", ex); MessageBox.Show(L.T("error.json", ex.Message)); return; }
+
+        if (OverrideSettingsPath != null) AddRecentSetting(OverrideSettingsPath);
+
+        // ── Silent bump from Explorer context menu (--bump=N) ─────────────────
+        if (SilentBumpPart >= 0 && InitialVersionPath != null) {
+            RunSilentBump(settings, InitialVersionPath, SilentBumpPart);
+            return;
+        }
+
+        // ── Check mode (--check): used by git pre-commit hook ─────────────────
+        if (CheckMode && InitialVersionPath == null) {
+            string v = Path.Combine(Directory.GetCurrentDirectory(), "VERSION");
+            if (File.Exists(v)) InitialVersionPath = v;
+        }
+        HashSet<string> checkIgnoreDirs  = null;
+        List<string>    checkIgnoreFiles = null;
+        if (CheckMode && InitialVersionPath != null) {
+            string vf = Path.GetFullPath(InitialVersionPath);
+            var ce = settings.Paths?.FirstOrDefault(p => {
+                try { return string.Equals(Path.GetFullPath(Path.Combine(p.Path.Trim('"'), "VERSION")), vf, StringComparison.OrdinalIgnoreCase); }
+                catch { return false; }
+            }) ?? new ProjectEntry();
+            checkIgnoreDirs  = BuildEffectiveIgnoreDirs(settings, ce);
+            checkIgnoreFiles = BuildEffectiveIgnoreFiles(settings, ce);
+            if (GetNewerFiles(vf, 1, checkIgnoreDirs, checkIgnoreFiles).Count == 0) {
+                Environment.Exit(0); return;
+            }
+            // VERSION is stale → fall through and show the main UI
+        }
 
         using var form = new Form {
             Text = $"VerBump  v{appVersion}",
@@ -514,6 +552,8 @@ class DarkColorTable : ProfessionalColorTable {
                     Font = new Font("Segoe UI", 8F)
                 };
                 btn.Click += (s, e) => {
+                    selectedIndex = entryIndex;
+                    updateSelection();
                     tbCaptured.Text = schemeCaptured.Bump(tbCaptured.Text.Trim(), partIndex);
                     tbCaptured.BackColor = Color.DarkGreen;
                 };
@@ -596,6 +636,13 @@ class DarkColorTable : ProfessionalColorTable {
             Image = Ph.ToBitmap(Ph.Gear, 13F, Color.White),
             TextImageRelation = TextImageRelation.ImageBeforeText,
         };
+        var tsLoadSettings = new ToolStripDropDownButton(L.T("toolbar.load_settings")) {
+            ForeColor = Color.White,
+            Image = Ph.ToBitmap(Ph.FolderOpen, 13F, Color.White),
+            TextImageRelation = TextImageRelation.ImageBeforeText,
+            ToolTipText = jsonPath,
+            ShowDropDownArrow = true,
+        };
         var tsSep  = new ToolStripSeparator();
         var tsInfo = new ToolStripButton(L.T("toolbar.info")) {
             ForeColor = Color.White,
@@ -623,6 +670,7 @@ class DarkColorTable : ProfessionalColorTable {
         };
 
         toolStrip.Items.Add(tsSettings);
+        toolStrip.Items.Add(tsLoadSettings);
         toolStrip.Items.Add(tsSep);
         toolStrip.Items.Add(tsInfo);
         toolStrip.Items.Add(new ToolStripSeparator());
@@ -630,6 +678,43 @@ class DarkColorTable : ProfessionalColorTable {
         toolStrip.Items.Add(tsFilterGreen);
 
         tsSettings.Click += (s, e) => ShowSettingsDialog(form, settings, jsonPath);
+
+        void LoadSettingsFile(string path) {
+            OverrideSettingsPath = path;
+            AddRecentSetting(path);
+            form.Close();
+            Run();
+        }
+
+        void RebuildRecentMenu() {
+            tsLoadSettings.DropDownItems.Clear();
+            var colFg  = Color.White;
+            var colDim = Color.FromArgb(160, 160, 165);
+
+            var browse = new ToolStripMenuItem(L.T("toolbar.load_browse")) { ForeColor = colFg };
+            browse.Click += (s, e) => {
+                using var ofd = new OpenFileDialog { Filter = "JSON|*.json", Title = L.T("toolbar.load_settings"), FileName = "settings.json" };
+                if (ofd.ShowDialog(form) == DialogResult.OK) LoadSettingsFile(ofd.FileName);
+            };
+            tsLoadSettings.DropDownItems.Add(browse);
+
+            var recent = LoadRecentSettings();
+            if (recent.Count > 0) {
+                tsLoadSettings.DropDownItems.Add(new ToolStripSeparator());
+                foreach (var p in recent) {
+                    string label   = p.Length > 65 ? "…" + p[^62..] : p;
+                    string current = p;
+                    var item = new ToolStripMenuItem(label) { ForeColor = string.Equals(p, jsonPath, StringComparison.OrdinalIgnoreCase) ? colDim : colFg, ToolTipText = p };
+                    item.Click += (s, e) => LoadSettingsFile(current);
+                    tsLoadSettings.DropDownItems.Add(item);
+                }
+            }
+        }
+
+        tsLoadSettings.DropDown.Renderer  = new ToolStripProfessionalRenderer(new DarkColorTable());
+        tsLoadSettings.DropDown.BackColor  = Color.FromArgb(45, 45, 48);
+        tsLoadSettings.DropDownOpening    += (s, e) => RebuildRecentMenu();
+        RebuildRecentMenu();
 
         tsInfo.Click += (s, e) => ShowAboutDialog(form, appVersion);
 
@@ -777,6 +862,13 @@ class DarkColorTable : ProfessionalColorTable {
         }
 
         statusTimer.Dispose();
+
+        // ── Check mode: re-check after UI and signal the hook ─────────────────
+        if (CheckMode && InitialVersionPath != null) {
+            string vf      = Path.GetFullPath(InitialVersionPath);
+            var newerFiles = GetNewerFiles(vf, 1, checkIgnoreDirs, checkIgnoreFiles);
+            Environment.Exit(newerFiles.Count > 0 ? 1 : 0);
+        }
     }
 
     static void ShowSettingsDialog(Form owner, Settings settings, string jsonPath) {
@@ -798,7 +890,7 @@ class DarkColorTable : ProfessionalColorTable {
         Font  fMono   = new Font("Consolas", 9F);
 
         using var dlg = new Form {
-            Text = L.T("settings.title"), Width = 620, Height = 660,
+            Text = L.T("settings.title"), Width = 620, Height = 696,
             StartPosition = FormStartPosition.CenterParent,
             BackColor = bgMid, ForeColor = fgW,
             FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -840,7 +932,7 @@ class DarkColorTable : ProfessionalColorTable {
 
         // ── Detail group ──────────────────────────────────────────────────────
         var grp = new GroupBox {
-            Parent = dlg, Text = "Entry", Left = 12, Top = 250, Width = 576, Height = 314,
+            Parent = dlg, Text = "Entry", Left = 12, Top = 250, Width = 576, Height = 350,
             Font = fUI, ForeColor = Color.LightGray,
         };
 
@@ -874,9 +966,20 @@ class DarkColorTable : ProfessionalColorTable {
         var tbIgnoreFiles = new TextBox { Parent = grp, Left = 96, Top = 260, Width = 460, Height = 38, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical };
         tipIgnore.SetToolTip(tbIgnoreFiles, "One pattern per line (e.g. *.bak).\nPrefix ! to re-include a global pattern.");
 
+        // ── Git hook ──────────────────────────────────────────────────────────
+        var btnHook = new Button {
+            Parent = grp, Left = 96, Top = 310, Width = 220, Height = 26,
+            FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI,
+            Text = "Git-Hook installieren",
+        };
+        var lblHookInfo = new Label {
+            Parent = grp, Left = 326, Top = 313, Width = 226, Height = 20,
+            Font = new Font("Segoe UI", 8F), ForeColor = Color.FromArgb(130, 130, 135),
+            Text = "pre-commit hook für dieses Repo",
+        };
         // ── Save / Cancel ─────────────────────────────────────────────────────
-        var btnSave   = new Button { Parent = dlg, Text = L.T("btn.save"),   Left = 396, Top = 574, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
-        var btnCancel = new Button { Parent = dlg, Text = L.T("btn.cancel"), Left = 504, Top = 574, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI, DialogResult = DialogResult.Cancel };
+        var btnSave   = new Button { Parent = dlg, Text = L.T("btn.save"),   Left = 396, Top = 610, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
+        var btnCancel = new Button { Parent = dlg, Text = L.T("btn.cancel"), Left = 504, Top = 610, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI, DialogResult = DialogResult.Cancel };
         dlg.CancelButton = btnCancel;
 
         // ── Logic ─────────────────────────────────────────────────────────────
@@ -939,6 +1042,10 @@ class DarkColorTable : ProfessionalColorTable {
             tbIgnoreFiles.Text = ListToText(e.IgnoreFiles);
             bool showFmt = e.Scheme.ToLower() != "semver";
             lblFormat.Visible = tbFormat.Visible = showFmt;
+            string dir = e.Path.Trim('"');
+            bool hasGit = Directory.Exists(Path.Combine(dir, ".git"));
+            btnHook.Enabled = hasGit;
+            btnHook.Text    = hasGit && HasGitHook(dir) ? "Git-Hook entfernen" : "Git-Hook installieren";
             ValidatePath();
             loading = false;
         }
@@ -979,6 +1086,15 @@ class DarkColorTable : ProfessionalColorTable {
         tbFormat.Leave      += (s, e) => Flush();
         tbIgnoreDirs.Leave  += (s, e) => Flush();
         tbIgnoreFiles.Leave += (s, e) => Flush();
+        btnHook.Click += (s, e) => {
+            if (current < 0 || current >= entries.Count) return;
+            string dir = entries[current].Path.Trim('"');
+            if (!Directory.Exists(dir)) return;
+            try {
+                if (HasGitHook(dir)) { RemoveGitHook(dir); btnHook.Text = "Git-Hook installieren"; }
+                else                  { InstallGitHook(dir); btnHook.Text = "Git-Hook entfernen"; }
+            } catch (Exception ex) { MessageBox.Show(ex.Message, "VerBump"); }
+        };
         cbReset.CheckedChanged  += (s, e) => { if (!loading) Flush(); };
         cbBackup.CheckedChanged += (s, e) => { if (!loading) Flush(); };
         cbScheme.SelectedIndexChanged += (s, e) => {
@@ -1068,7 +1184,7 @@ class DarkColorTable : ProfessionalColorTable {
         RefreshList(0);
         LoadEntry(0);
         new Label {
-            Parent = dlg, Left = 12, Top = 618, Width = 592, Height = 16,
+            Parent = dlg, Left = 12, Top = 654, Width = 592, Height = 16,
             Text = jsonPath,
             Font = new Font("Segoe UI", 7.5F),
             ForeColor = Color.FromArgb(110, 110, 115),
@@ -1079,6 +1195,153 @@ class DarkColorTable : ProfessionalColorTable {
             if (owner?.Visible == true) owner.Close();
             Run();
         }
+    }
+
+    const string HookMarker = "# --- VerBump pre-commit ---";
+
+    static string GitHookPath(string projectDir) =>
+        Path.Combine(projectDir, ".git", "hooks", "pre-commit");
+
+    static bool HasGitHook(string projectDir) {
+        string hookFile = GitHookPath(projectDir);
+        return File.Exists(hookFile) && File.ReadAllText(hookFile).Contains(HookMarker);
+    }
+
+    static void InstallGitHook(string projectDir) {
+        string hooksDir = Path.Combine(projectDir, ".git", "hooks");
+        if (!Directory.Exists(hooksDir)) return;
+        string hookFile = GitHookPath(projectDir);
+        string exePath  = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName.Replace('\\', '/');
+        string block    = $"\n{HookMarker}\n\"{exePath}\" --check\n{HookMarker}\n";
+        if (File.Exists(hookFile)) {
+            string content = File.ReadAllText(hookFile);
+            if (!content.Contains(HookMarker))
+                File.AppendAllText(hookFile, block);
+        } else {
+            File.WriteAllText(hookFile, "#!/bin/sh" + block);
+        }
+    }
+
+    static void RemoveGitHook(string projectDir) {
+        string hookFile = GitHookPath(projectDir);
+        if (!File.Exists(hookFile)) return;
+        string content = File.ReadAllText(hookFile);
+        if (!content.Contains(HookMarker)) return;
+        var lines   = content.Split('\n').ToList();
+        bool inBlock = false;
+        var result  = new List<string>();
+        foreach (var line in lines) {
+            if (line.TrimEnd() == HookMarker) { inBlock = !inBlock; continue; }
+            if (!inBlock) result.Add(line);
+        }
+        string newContent = string.Join("\n", result).Trim();
+        if (newContent == "#!/bin/sh" || newContent.Length == 0) File.Delete(hookFile);
+        else File.WriteAllText(hookFile, newContent + "\n");
+    }
+
+    // ── Recent settings files ──────────────────────────────────────────────────
+
+    const int MaxRecentSettings = 5;
+
+    static string RecentSettingsFile() =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VerBump", "recent-settings.json");
+
+    static List<string> LoadRecentSettings() {
+        try {
+            string f = RecentSettingsFile();
+            if (File.Exists(f)) return JsonSerializer.Deserialize<List<string>>(File.ReadAllText(f)) ?? new();
+        } catch { }
+        return new();
+    }
+
+    static void AddRecentSetting(string settingsPath) {
+        try {
+            var recent = LoadRecentSettings();
+            recent.RemoveAll(p => string.Equals(p, settingsPath, StringComparison.OrdinalIgnoreCase));
+            recent.Insert(0, settingsPath);
+            if (recent.Count > MaxRecentSettings) recent = recent.Take(MaxRecentSettings).ToList();
+            File.WriteAllText(RecentSettingsFile(), JsonSerializer.Serialize(recent));
+        } catch { }
+    }
+
+    static void RunSilentBump(Settings settings, string versionFilePath, int partIndex) {
+        string versionFile = Path.GetFullPath(versionFilePath);
+
+        // Find matching project entry (for scheme + backup settings)
+        ProjectEntry entry = settings.Paths?.FirstOrDefault(p => {
+            try {
+                string pv = Path.GetFullPath(Path.Combine(p.Path.Trim('"'), "VERSION"));
+                return string.Equals(pv, versionFile, StringComparison.OrdinalIgnoreCase);
+            } catch { return false; }
+        }) ?? new ProjectEntry(); // default: SemVer
+
+        IVersionScheme scheme = SchemeFactory.Create(entry);
+
+        string current;
+        try { current = File.ReadAllText(versionFile).Trim(); }
+        catch (Exception ex) {
+            MessageBox.Show($"VerBump: Kann VERSION-Datei nicht lesen:\n{ex.Message}", "VerBump", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        string next = scheme.Bump(current, partIndex);
+
+        try {
+            if (entry.Backup) File.Copy(versionFile, versionFile + ".bak", true);
+            File.WriteAllText(versionFile, next);
+        } catch (Exception ex) {
+            MessageBox.Show($"VerBump: Kann VERSION-Datei nicht schreiben:\n{ex.Message}", "VerBump", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        string projectName = !string.IsNullOrWhiteSpace(entry.Name)
+            ? entry.Name
+            : Path.GetFileName(Path.GetDirectoryName(versionFile)) ?? "?";
+
+        ShowToast($"{current}  →  {next}", projectName);
+    }
+
+    static void ShowToast(string message, string project) {
+        var colBg  = Color.FromArgb(28, 28, 40);
+        var colFg  = Color.FromArgb(72, 199, 142);
+        var colDim = Color.FromArgb(160, 160, 180);
+
+        var toast = new Form {
+            FormBorderStyle = FormBorderStyle.None,
+            StartPosition   = FormStartPosition.Manual,
+            Width = 300, Height = 70,
+            BackColor = colBg,
+            TopMost = true,
+            Opacity = 0.95,
+            ShowInTaskbar = false,
+        };
+        new Label {
+            Parent = toast, AutoSize = false,
+            Left = 12, Top = 8, Width = 276, Height = 24,
+            Text = $"VerBump  ✓  {message}",
+            ForeColor = colFg,
+            Font = new Font("Segoe UI", 11F, FontStyle.Bold),
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        new Label {
+            Parent = toast, AutoSize = false,
+            Left = 12, Top = 36, Width = 276, Height = 18,
+            Text = project,
+            ForeColor = colDim,
+            Font = new Font("Segoe UI", 8.5F),
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+
+        var screen = Screen.PrimaryScreen.WorkingArea;
+        toast.Location = new Point(screen.Right - toast.Width - 16, screen.Bottom - toast.Height - 16);
+
+        var timer = new System.Windows.Forms.Timer { Interval = 2500 };
+        timer.Tick += (s, e) => { timer.Stop(); toast.Close(); };
+        toast.Shown += (s, e) => timer.Start();
+        toast.Click += (s, e) => toast.Close();
+        foreach (Control c in toast.Controls) c.Click += (s, e) => toast.Close();
+
+        Application.Run(toast);
     }
 
     static void ShowAboutDialog(Form owner, string version) {
@@ -1106,7 +1369,7 @@ class DarkColorTable : ProfessionalColorTable {
             BackColor = Color.Transparent,
         };
         try {
-            string icoPath = Path.Combine(AppContext.BaseDirectory, "verbump.ico");
+            string icoPath = Path.Combine(Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory, "verbump.ico");
             if (File.Exists(icoPath)) pic.Image = new Icon(icoPath, 64, 64).ToBitmap();
         } catch { /* ignore */ }
 

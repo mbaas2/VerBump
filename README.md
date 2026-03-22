@@ -12,6 +12,8 @@ of all your repos at a glance.
 
 → **[Website & full documentation](https://mbaas2.github.io/VerBump/)**
 
+![VerBump main window](docs/screenshots/main.png)
+
 ## Features
 
 - **Staleness detection** — highlights projects where source files are newer than the current VERSION
@@ -20,6 +22,9 @@ of all your repos at a glance.
 - **Flexible ignore rules** — global + per-project, with `!`-prefix exclusion
 - **Multilingual** — English and German; add more by dropping a `lang.xx.json` next to the exe
 - **Zero dependencies** — single self-contained `.exe`, no .NET runtime installation needed
+- **Git pre-commit hook** — install per project from Settings; blocks commits when VERSION is stale
+- **Explorer context menu** — right-click a folder or `VERSION` file to open VerBump or silently bump Major/Minor/Patch
+- **CLI arguments** — `--check`, `--bump=N`, `--settings=<path>`, or pass a project path directly
 
 ## Download
 
@@ -43,7 +48,7 @@ Output: `src/bin/Release/net8.0-windows/win-x64/publish/VerBump.exe`
 
 ## Support
 
-VerBump is free and open source (MIT). If it saves you time, consider buying me a coffee:
+VerBump is free and open source (MIT). If it saves you time, consider buying me a coffee or a coffe machine:
 
 [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor%20on%20GitHub-%E2%9D%A4-pink?logo=github-sponsors&style=for-the-badge)](https://github.com/sponsors/mbaas2)
 

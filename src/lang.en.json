@@ -4,6 +4,8 @@
   "btn.yes":                "Yes",
   "btn.no":                 "No",
   "toolbar.settings":       "Settings",
+  "toolbar.load_settings":  "Open settings…",
+  "toolbar.load_browse":    "Browse…",
   "toolbar.info":           "About",
   "settings.title":         "Settings",
   "settings.body":          "settings.json has been opened in the editor.\n\nClick OK after saving to reload the settings.",

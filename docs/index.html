@@ -65,6 +65,9 @@
 
     /* ── Navbar brand accent ── */
     .navbar-accent { color: #48c78e; }
+
+    .screenshot-frame { border: 1px solid #333; border-radius: 8px; overflow: hidden; display: inline-block; }
+    .screenshot-caption { margin-top: .75rem; }
   </style>
 </head>
 <body>
@@ -165,6 +168,27 @@
   </div>
 </section>
 
+<!-- ══ SCREENSHOTS ══════════════════════════════════════════════════════════ -->
+<section class="section">
+  <div class="container">
+    <h2 class="title is-3 has-text-centered mb-6">Screenshots</h2>
+    <div class="columns is-centered is-vcentered">
+      <div class="column is-6 has-text-centered">
+        <figure class="image screenshot-frame">
+          <img src="screenshots/main.png" alt="VerBump main window — orange rows indicate stale VERSION" />
+        </figure>
+        <p class="screenshot-caption has-text-grey">Main window — orange = VERSION not yet bumped</p>
+      </div>
+      <div class="column is-5 has-text-centered">
+        <figure class="image screenshot-frame">
+          <img src="screenshots/settings.png" alt="VerBump Settings dialog" />
+        </figure>
+        <p class="screenshot-caption has-text-grey">Settings dialog with Git hook integration</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ══ FEATURES ════════════════════════════════════════════════════════════ -->
 <section class="section" id="features">
   <div class="container">
@@ -224,6 +248,34 @@
           <h3 class="title is-5">Zero dependencies</h3>
           <p>A single self-contained <code>.exe</code> — no .NET runtime installation,
              no registry entries, no installer required.</p>
+        </div>
+      </div>
+
+      <div class="column is-4">
+        <div class="box has-text-centered">
+          <span class="feature-icon">🪝</span>
+          <h3 class="title is-5">Git pre-commit hook</h3>
+          <p>Install a hook directly from the Settings dialog — VerBump blocks the commit
+             if VERSION is stale, opens automatically so you can bump before anything goes out.</p>
+        </div>
+      </div>
+
+      <div class="column is-4">
+        <div class="box has-text-centered">
+          <span class="feature-icon">🖱</span>
+          <h3 class="title is-5">Explorer context menu</h3>
+          <p>Right-click any folder or <code>VERSION</code> file to open VerBump or silently
+             bump Major&thinsp;/&thinsp;Minor&thinsp;/&thinsp;Patch — no window, just a toast notification.</p>
+        </div>
+      </div>
+
+      <div class="column is-4">
+        <div class="box has-text-centered">
+          <span class="feature-icon">⚡</span>
+          <h3 class="title is-5">Automation-ready</h3>
+          <p>Full command-line interface: pass a <code>VERSION</code> path, load a custom
+             settings file, bump silently with <code>--bump=1/2/3</code>, or check staleness
+             with <code>--check</code> — scriptable from any tool or launcher.</p>
         </div>
       </div>
 
@@ -291,6 +343,48 @@
             <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>Navigate projects</td></tr>
             <tr><td><kbd>Enter</kbd></td><td>Save version</td></tr>
             <tr><td><kbd>Escape</kbd></td><td>Cancel / discard changes</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Git pre-commit hook -->
+    <div class="content mb-6">
+      <h3>Git pre-commit hook</h3>
+      <p>
+        VerBump can act as a <code>pre-commit</code> guard: if any source file is newer than
+        <code>VERSION</code>, the commit is blocked and VerBump opens automatically so you can
+        bump before anything goes out.
+      </p>
+      <p><strong>Setup:</strong> open Settings, select a project, click <strong>Git-Hook installieren</strong>.
+         VerBump writes a small script into <code>.git/hooks/pre-commit</code> — existing hook content
+         is preserved. Remove it the same way with <strong>Git-Hook entfernen</strong>.</p>
+      <p>The hook calls VerBump with <code>--check</code>. You can also invoke it manually:</p>
+      <pre><code>VerBump.exe --check          # check project in current directory
+VerBump.exe --check C:\my\project</code></pre>
+      <p>Exit code <code>0</code> = VERSION is current &nbsp;·&nbsp; <code>1</code> = stale (commit blocked).</p>
+      <div class="notification is-warning is-light mt-4">
+        <strong>When to use this:</strong> The hook makes most sense if you follow a
+        <em>bump-before-push</em> workflow — one deliberate "release commit" where you bump
+        the version before anything goes out. If you commit frequently during development
+        without bumping, the hook will block every commit and quickly become annoying.
+        Skip it for a single commit with <code>git commit --no-verify</code>, or remove
+        it from Settings until you're ready to ship.
+      </div>
+    </div>
+
+    <!-- Command-line arguments -->
+    <div class="content mb-6">
+      <h3>Command-line arguments</h3>
+      <div class="table-container">
+        <table class="table is-bordered is-narrow scheme-table">
+          <thead><tr><th>Argument</th><th>Effect</th></tr></thead>
+          <tbody>
+            <tr><td>VerBump.exe C:\path\to\project</td><td>Open VerBump with that project pre-selected</td></tr>
+            <tr><td>VerBump.exe C:\path\VERSION</td><td>Same — accepts the VERSION file directly</td></tr>
+            <tr><td>--check [path]</td><td>Silently exit 0 if current, open UI and exit 1 if stale</td></tr>
+            <tr><td>--bump=1 / 2 / 3</td><td>Silently bump part 1/2/3 (SemVer: Major/Minor/Patch) and show a toast</td></tr>
+            <tr><td>--settings=&lt;path&gt;</td><td>Load settings from a custom JSON file</td></tr>
           </tbody>
         </table>
       </div>

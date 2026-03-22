@@ -1,0 +1,55 @@
+{
+  "ignoreDirs": [
+    ".git", ".svn", ".hg", "node_modules", "bin", "obj",
+    ".vs", ".idea", "__pycache__", "dist", "build"
+  ],
+  "ignoreFiles": [
+    "*.bak", "*.tmp", "*.log", "Thumbs.db", ".DS_Store"
+  ],
+  "paths": [
+    {
+      "path": "C:\\devt\\VerBump\\doc\\WebApp",
+      "name": "Web App",
+      "icon": "",
+      "scheme": "semver",
+      "format": "",
+      "resetOnBump": true,
+      "backup": false,
+      "ignoreDirs": [],
+      "ignoreFiles": []
+    },
+    {
+      "path": "C:\\devt\\VerBump\\doc\\MobileClient",
+      "name": "Mobile Client",
+      "icon": "",
+      "scheme": "semver",
+      "format": "",
+      "resetOnBump": true,
+      "backup": false,
+      "ignoreDirs": [],
+      "ignoreFiles": []
+    },
+    {
+      "path": "C:\\devt\\VerBump\\doc\\ApiServer",
+      "name": "API Server",
+      "icon": "",
+      "scheme": "semver",
+      "format": "",
+      "resetOnBump": true,
+      "backup": false,
+      "ignoreDirs": [],
+      "ignoreFiles": []
+    },
+    {
+      "path": "C:\\devt\\VerBump\\doc\\SharedLib",
+      "name": "Shared Library",
+      "icon": "",
+      "scheme": "semver",
+      "format": "",
+      "resetOnBump": true,
+      "backup": false,
+      "ignoreDirs": [],
+      "ignoreFiles": []
+    }
+  ]
+}

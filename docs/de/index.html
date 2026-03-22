@@ -41,6 +41,9 @@
     .why-quote p  { line-height: 1.75; }
     .why-attr     { margin-top: 1rem; font-size: .9rem; }
     .navbar-accent { color: #48c78e; }
+
+    .screenshot-frame   { border: 1px solid #333; border-radius: 8px; overflow: hidden; display: inline-block; }
+    .screenshot-caption { margin-top: .75rem; }
   </style>
 </head>
 <body>
@@ -144,6 +147,27 @@
   </div>
 </section>
 
+<!-- ══ SCREENSHOTS ══════════════════════════════════════════════════════════ -->
+<section class="section">
+  <div class="container">
+    <h2 class="title is-3 has-text-centered mb-6">Screenshots</h2>
+    <div class="columns is-centered is-vcentered">
+      <div class="column is-6 has-text-centered">
+        <figure class="image screenshot-frame">
+          <img src="../screenshots/main.png" alt="VerBump Hauptfenster — orange Zeilen zeigen veraltete VERSION" />
+        </figure>
+        <p class="screenshot-caption has-text-grey">Hauptfenster — Orange = VERSION noch nicht erhöht</p>
+      </div>
+      <div class="column is-5 has-text-centered">
+        <figure class="image screenshot-frame">
+          <img src="../screenshots/settings.png" alt="VerBump Einstellungen" />
+        </figure>
+        <p class="screenshot-caption has-text-grey">Einstellungen mit Git-Hook-Integration</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ══ FEATURES ════════════════════════════════════════════════════════════ -->
 <section class="section" id="features">
   <div class="container">
@@ -192,7 +216,7 @@
         <div class="box has-text-centered">
           <span class="feature-icon">🌐</span>
           <h3 class="title is-5">Mehrsprachig</h3>
-          <p>Lieferbar mit Deutsch und Englisch. Weitere Sprachen lassen sich durch
+          <p>Verfügbar auf Deutsch und Englisch. Weitere Sprachen lassen sich durch
              eine <code>lang.xx.json</code>-Datei neben der EXE ergänzen.</p>
         </div>
       </div>
@@ -203,6 +227,34 @@
           <h3 class="title is-5">Keine Abhängigkeiten</h3>
           <p>Eine einzige, eigenständige <code>.exe</code> — keine .NET-Installation,
              keine Registry-Einträge, kein Installer erforderlich.</p>
+        </div>
+      </div>
+
+      <div class="column is-4">
+        <div class="box has-text-centered">
+          <span class="feature-icon">🪝</span>
+          <h3 class="title is-5">Git pre-commit Hook</h3>
+          <p>Hook direkt aus den Einstellungen installieren — VerBump blockiert den Commit,
+             wenn VERSION veraltet ist, und öffnet sich automatisch zum Erhöhen.</p>
+        </div>
+      </div>
+
+      <div class="column is-4">
+        <div class="box has-text-centered">
+          <span class="feature-icon">🖱</span>
+          <h3 class="title is-5">Explorer-Kontextmenü</h3>
+          <p>Rechtsklick auf Ordner oder <code>VERSION</code>-Datei: VerBump öffnen oder
+             Major&thinsp;/&thinsp;Minor&thinsp;/&thinsp;Patch lautlos erhöhen — kein Fenster, nur eine kurze Benachrichtigung.</p>
+        </div>
+      </div>
+
+      <div class="column is-4">
+        <div class="box has-text-centered">
+          <span class="feature-icon">⚡</span>
+          <h3 class="title is-5">Automatisierbar</h3>
+          <p>Vollständige Kommandozeilenschnittstelle: <code>VERSION</code>-Pfad übergeben,
+             alternative Settings laden, lautlos erhöhen mit <code>--bump=1/2/3</code>,
+             Aktualität prüfen mit <code>--check</code> — skriptbar aus jedem Werkzeug.</p>
         </div>
       </div>
 
@@ -270,6 +322,49 @@
             <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>Zwischen Projekten navigieren</td></tr>
             <tr><td><kbd>Enter</kbd></td><td>Version speichern</td></tr>
             <tr><td><kbd>Escape</kbd></td><td>Abbrechen / Änderungen verwerfen</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Git pre-commit Hook -->
+    <div class="content mb-6">
+      <h3>Git pre-commit Hook</h3>
+      <p>
+        VerBump kann als <code>pre-commit</code>-Wächter eingesetzt werden: Ist eine Quelldatei
+        neuer als <code>VERSION</code>, wird der Commit blockiert und VerBump öffnet sich
+        automatisch zum Erhöhen.
+      </p>
+      <p><strong>Einrichten:</strong> Einstellungen öffnen, Projekt auswählen, auf
+         <strong>Git-Hook installieren</strong> klicken. VerBump schreibt ein kleines Skript in
+         <code>.git/hooks/pre-commit</code> — vorhandene Hook-Inhalte bleiben erhalten.
+         Entfernen geht genauso über <strong>Git-Hook entfernen</strong>.</p>
+      <p>Der Hook ruft VerBump mit <code>--check</code> auf. Manuell möglich:</p>
+      <pre><code>VerBump.exe --check               # Projekt im aktuellen Verzeichnis prüfen
+VerBump.exe --check C:\mein\Projekt</code></pre>
+      <p>Exit-Code <code>0</code> = VERSION aktuell &nbsp;·&nbsp; <code>1</code> = veraltet (Commit blockiert).</p>
+      <div class="notification is-warning is-light mt-4">
+        <strong>Wann sinnvoll:</strong> Der Hook passt am besten zu einem
+        <em>Bump-before-Push</em>-Workflow — ein bewusster „Release-Commit", bei dem die
+        Version kurz vor dem Veröffentlichen erhöht wird. Wer während der Entwicklung
+        häufig committed ohne die Version zu erhöhen, wird vom Hook bei jedem Commit
+        blockiert. Einzelne Commits überspringen mit <code>git commit --no-verify</code>,
+        oder den Hook in den Einstellungen einfach deaktivieren bis zum nächsten Release.
+      </div>
+    </div>
+
+    <!-- Kommandozeilenargumente -->
+    <div class="content mb-6">
+      <h3>Kommandozeilenargumente</h3>
+      <div class="table-container">
+        <table class="table is-bordered is-narrow scheme-table">
+          <thead><tr><th>Argument</th><th>Wirkung</th></tr></thead>
+          <tbody>
+            <tr><td>VerBump.exe C:\pfad\zum\projekt</td><td>VerBump öffnen, Projekt vorselektiert</td></tr>
+            <tr><td>VerBump.exe C:\pfad\VERSION</td><td>Dasselbe — akzeptiert auch die VERSION-Datei direkt</td></tr>
+            <tr><td>--check [pfad]</td><td>Lautlos Exit 0 wenn aktuell, UI öffnen und Exit 1 wenn veraltet</td></tr>
+            <tr><td>--bump=1 / 2 / 3</td><td>Teil 1/2/3 lautlos erhöhen (SemVer: Major/Minor/Patch) + Toast-Meldung</td></tr>
+            <tr><td>--settings=&lt;pfad&gt;</td><td>Einstellungen aus alternativer JSON-Datei laden</td></tr>
           </tbody>
         </table>
       </div>

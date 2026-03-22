@@ -4,6 +4,8 @@
   "btn.yes":                "Ja",
   "btn.no":                 "Nein",
   "toolbar.settings":       "Einstellungen",
+  "toolbar.load_settings":  "Einstellungen öffnen…",
+  "toolbar.load_browse":    "Durchsuchen…",
   "toolbar.info":           "Über",
   "settings.title":         "Einstellungen",
   "settings.body":          "settings.json wurde im Editor geöffnet.\n\nNach dem Speichern OK drücken, um die Einstellungen neu zu laden.",
