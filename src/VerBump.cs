@@ -1066,7 +1066,7 @@ class DarkColorTable : ProfessionalColorTable {
 
         using var dlg = new Form {
             Text            = L.T("info.title"),
-            Width           = 360, Height = 320,
+            Width           = 360, Height = 348,
             StartPosition   = FormStartPosition.CenterParent,
             BackColor       = bgMid, ForeColor = fgW,
             FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -1128,26 +1128,37 @@ class DarkColorTable : ProfessionalColorTable {
             return lnk;
         }
 
-        MakeLink(dlg, "🌐  mbaas2.github.io/VerBump",         "https://mbaas2.github.io/VerBump/",        162, accent);
-        MakeLink(dlg, "❤  Sponsor this project on GitHub",   "https://github.com/sponsors/mbaas2",        184, Color.FromArgb(255, 120, 150));
-        MakeLink(dlg, "⌥  View source on GitHub",            "https://github.com/mbaas2/VerBump",         206, Color.FromArgb(130, 180, 255));
+        MakeLink(dlg, "🌐  mbaas2.github.io/VerBump",       "https://mbaas2.github.io/VerBump/",       162, accent);
+        MakeLink(dlg, "❤  Sponsor this project on GitHub", "https://github.com/sponsors/mbaas2",       184, Color.FromArgb(255, 120, 150));
+        MakeLink(dlg, "✉  Report an issue",                "https://github.com/mbaas2/VerBump/issues", 206, Color.FromArgb(255, 190, 80));
+        MakeLink(dlg, "⌥  View source on GitHub",          "https://github.com/mbaas2/VerBump",        228, Color.FromArgb(130, 180, 255));
 
         // ── Separator ──────────────────────────────────────────────────────────
         new Label {
-            Parent = dlg, Left = 24, Top = 234, Width = 294, Height = 1,
+            Parent = dlg, Left = 24, Top = 258, Width = 294, Height = 1,
             BackColor = Color.FromArgb(70, 70, 75),
         };
 
-        // ── Copyright ─────────────────────────────────────────────────────────
+        // ── Copyright + mail ───────────────────────────────────────────────────
         new Label {
             Parent = dlg, Text = $"© {DateTime.Today.Year} Michael Baas",
-            Left = 24, Top = 244, Width = 200, Height = 18,
+            Left = 24, Top = 269, Width = 150, Height = 18,
             Font = new Font("Segoe UI", 8F), ForeColor = fgDim,
+        };
+        var lnkMail = new LinkLabel {
+            Parent = dlg, Text = "✉ verbump@mbaas.de",
+            Left = 176, Top = 269, Width = 142, Height = 18,
+            Font = new Font("Segoe UI", 8F), BackColor = Color.Transparent,
+            LinkColor = fgDim, ActiveLinkColor = Color.White,
+        };
+        lnkMail.Click += (s, e) => {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("mailto:verbump@mbaas.de") { UseShellExecute = true }); }
+            catch { }
         };
 
         // ── Close button ──────────────────────────────────────────────────────
         var btnClose = new Button {
-            Parent = dlg, Text = "OK", Left = 244, Top = 238, Width = 74, Height = 28,
+            Parent = dlg, Text = "OK", Left = 244, Top = 262, Width = 74, Height = 28,
             FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(60, 60, 65),
             ForeColor = fgW, Font = fUI, DialogResult = DialogResult.OK,
         };
