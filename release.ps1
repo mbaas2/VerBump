@@ -84,7 +84,19 @@ if (Test-Path $NextNotes) {
 }
 Write-Host "─────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
 Write-Host ""
-$confirm = Read-Host "Release v$Version jetzt auf GitHub veröffentlichen? (J/N)"
+do {
+    $confirm = Read-Host "Release v$Version jetzt auf GitHub veröffentlichen? (J/N/E=Bearbeiten)"
+    if ($confirm -match '^[Ee]') {
+        Start-Process -FilePath "notepad.exe" -ArgumentList $NextNotes -Wait
+        Write-Host ""
+        Write-Host "─── Release Notes (aktualisiert) ────────────────────────────────" -ForegroundColor DarkGray
+        if (Test-Path $NextNotes) {
+            Get-Content $NextNotes | ForEach-Object { Write-Host "  $_" }
+        }
+        Write-Host "─────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+        Write-Host ""
+    }
+} while ($confirm -match '^[Ee]')
 if ($confirm -notmatch '^[Jj]') { throw "Release abgebrochen — kein GitHub-Release erstellt." }
 
 # ── 5. GitHub Release ─────────────────────────────────────────────────────────
