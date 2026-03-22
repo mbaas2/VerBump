@@ -272,9 +272,7 @@ public static class VerBump {
         public bool?       HasIssues;   // null = noch am Scannen
     }
 
-    const string AppInfoText = ""; // hier eigenen Text eintragen
-
-    class DarkColorTable : ProfessionalColorTable {
+class DarkColorTable : ProfessionalColorTable {
         static readonly Color Bg    = Color.FromArgb(45, 45, 48);
         static readonly Color Hover = Color.FromArgb(70, 70, 80);
         static readonly Color Sep   = Color.FromArgb(80, 80, 85);
@@ -608,11 +606,7 @@ public static class VerBump {
 
         tsSettings.Click += (s, e) => ShowSettingsDialog(form, settings, jsonPath);
 
-        tsInfo.Click += (s, e) => {
-            string msg = $"VerBump  v{appVersion}\nLanguage: {L.Lang.ToUpper()}";
-            if (!string.IsNullOrWhiteSpace(AppInfoText)) msg += $"\n\n{AppInfoText}";
-            MessageBox.Show(msg, L.T("info.title"), MessageBoxButtons.OK, MessageBoxIcon.Information);
-        };
+        tsInfo.Click += (s, e) => ShowAboutDialog(form, appVersion);
 
         form.Controls.Add(mainPanel);
         form.Controls.Add(bottomPanel);
@@ -1060,6 +1054,106 @@ public static class VerBump {
             if (owner?.Visible == true) owner.Close();
             Run();
         }
+    }
+
+    static void ShowAboutDialog(Form owner, string version) {
+        Color bgDark  = Color.FromArgb(30, 30, 30);
+        Color bgMid   = Color.FromArgb(45, 45, 48);
+        Color fgW     = Color.White;
+        Color fgDim   = Color.FromArgb(160, 160, 165);
+        Color accent  = Color.FromArgb(72, 199, 142);
+        Font  fUI     = new Font("Segoe UI", 9F);
+
+        using var dlg = new Form {
+            Text            = L.T("info.title"),
+            Width           = 360, Height = 320,
+            StartPosition   = FormStartPosition.CenterParent,
+            BackColor       = bgMid, ForeColor = fgW,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox     = false, MinimizeBox = false,
+            Icon            = owner.Icon,
+        };
+
+        // ── Icon ───────────────────────────────────────────────────────────────
+        var pic = new PictureBox {
+            Parent   = dlg, Left = 24, Top = 20, Width = 64, Height = 64,
+            SizeMode = PictureBoxSizeMode.Zoom,
+            BackColor = Color.Transparent,
+        };
+        try {
+            string icoPath = Path.Combine(AppContext.BaseDirectory, "verbump.ico");
+            if (File.Exists(icoPath)) pic.Image = new Icon(icoPath, 64, 64).ToBitmap();
+        } catch { /* ignore */ }
+
+        // ── Title + version ────────────────────────────────────────────────────
+        new Label {
+            Parent = dlg, Text = "VerBump", Left = 104, Top = 22,
+            Width = 220, Height = 32,
+            Font = new Font("Segoe UI", 18F, FontStyle.Bold), ForeColor = fgW,
+            AutoSize = false,
+        };
+        new Label {
+            Parent = dlg, Text = $"Version {version}", Left = 106, Top = 56,
+            Width = 200, Height = 18, Font = fUI, ForeColor = accent,
+        };
+        new Label {
+            Parent = dlg, Text = $"Language: {L.Lang.ToUpper()}", Left = 106, Top = 74,
+            Width = 200, Height = 18, Font = fUI, ForeColor = fgDim,
+        };
+
+        // ── Separator ──────────────────────────────────────────────────────────
+        new Label {
+            Parent = dlg, Left = 24, Top = 100, Width = 294, Height = 1,
+            BackColor = Color.FromArgb(70, 70, 75),
+        };
+
+        // ── Description ────────────────────────────────────────────────────────
+        new Label {
+            Parent = dlg, Text = "Version file manager for Windows developers.\nFree & open source — MIT License.",
+            Left = 24, Top = 112, Width = 294, Height = 40,
+            Font = fUI, ForeColor = fgDim, AutoSize = false,
+        };
+
+        // ── Links ──────────────────────────────────────────────────────────────
+        static LinkLabel MakeLink(Form f, string text, string url, int top, Color col) {
+            var lnk = new LinkLabel {
+                Parent = f, Text = text, Left = 24, Top = top, Width = 294, Height = 20,
+                Font = new Font("Segoe UI", 9F), BackColor = Color.Transparent,
+                LinkColor = col, ActiveLinkColor = Color.White,
+            };
+            lnk.Click += (s, e) => {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); }
+                catch { }
+            };
+            return lnk;
+        }
+
+        MakeLink(dlg, "🌐  mbaas2.github.io/VerBump",         "https://mbaas2.github.io/VerBump/",        162, accent);
+        MakeLink(dlg, "❤  Sponsor this project on GitHub",   "https://github.com/sponsors/mbaas2",        184, Color.FromArgb(255, 120, 150));
+        MakeLink(dlg, "⌥  View source on GitHub",            "https://github.com/mbaas2/VerBump",         206, Color.FromArgb(130, 180, 255));
+
+        // ── Separator ──────────────────────────────────────────────────────────
+        new Label {
+            Parent = dlg, Left = 24, Top = 234, Width = 294, Height = 1,
+            BackColor = Color.FromArgb(70, 70, 75),
+        };
+
+        // ── Copyright ─────────────────────────────────────────────────────────
+        new Label {
+            Parent = dlg, Text = $"© {DateTime.Today.Year} Michael Baas",
+            Left = 24, Top = 244, Width = 200, Height = 18,
+            Font = new Font("Segoe UI", 8F), ForeColor = fgDim,
+        };
+
+        // ── Close button ──────────────────────────────────────────────────────
+        var btnClose = new Button {
+            Parent = dlg, Text = "OK", Left = 244, Top = 238, Width = 74, Height = 28,
+            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(60, 60, 65),
+            ForeColor = fgW, Font = fUI, DialogResult = DialogResult.OK,
+        };
+        dlg.AcceptButton = btnClose;
+
+        dlg.ShowDialog(owner?.Visible == true ? owner : null);
     }
 
     static bool OpenWithEditor(string editor, string filePath) {
