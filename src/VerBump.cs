@@ -36,106 +36,263 @@ public interface IVersionScheme {
     List<string> GetButtonLabels();
     string Bump(string current, int partIndex);
     string Refresh(string current) => current;
+    bool HasDateTokens => false;
 }
 
-public class SemVerScheme : IVersionScheme {
-    readonly bool _resetOnBump;
-    public SemVerScheme(bool resetOnBump = true) { _resetOnBump = resetOnBump; }
-    public List<string> GetButtonLabels() => new() { "Major", "Minor", "Patch" };
+// ── Version format tokens ─────────────────────────────────────────────────────
 
-    public string Bump(string current, int partIndex) {
-        var parts = current.Split('.');
-        if (parts.Length < 3) parts = new[] { "0", "0", "0" };
-        int val = int.TryParse(parts[partIndex], out int v) ? v : 0;
-        parts[partIndex] = (val + 1).ToString();
-        if (_resetOnBump)
-            for (int i = partIndex + 1; i < parts.Length; i++) parts[i] = "0";
-        return string.Join(".", parts);
+public abstract record FormatToken;
+public record LiteralToken(string Text)            : FormatToken;
+public record DateToken(string Spec)               : FormatToken;   // {YYYY} {YY} {Y} {MM} {DD}
+public record NumericToken(string Name)            : FormatToken;   // {#name}
+public record InlineListToken(string[] Values)     : FormatToken;   // {a|b|c}
+public record NamedListToken(string ListName)      : FormatToken;   // {listname}
+public record FreeTextToken(int MaxLen)            : FormatToken;   // [*N]
+public record ResetGroupToken(FormatToken[] Inner) : FormatToken;   // [{#a}.{#b}.{#c}]
+
+// ── Format parser ─────────────────────────────────────────────────────────────
+
+public static class FormatParser {
+    static readonly HashSet<string> DateSpecs =
+        new(StringComparer.OrdinalIgnoreCase) { "YYYY", "YYY", "YY", "Y", "MM", "DD" };
+
+    public static FormatToken[] Parse(string fmt) {
+        if (string.IsNullOrWhiteSpace(fmt))
+            return [new ResetGroupToken([
+                new NumericToken("major"), new LiteralToken("."),
+                new NumericToken("minor"), new LiteralToken("."),
+                new NumericToken("patch")])];
+        var result = new List<FormatToken>();
+        int i = 0;
+        while (i < fmt.Length) {
+            if (fmt[i] == '[') {
+                int close = FindMatching(fmt, i, '[', ']');
+                string inner = fmt[(i + 1)..close];
+                if (inner.Equals("sem", StringComparison.OrdinalIgnoreCase))
+                    result.Add(new ResetGroupToken([
+                        new NumericToken("major"), new LiteralToken("."),
+                        new NumericToken("minor"), new LiteralToken("."),
+                        new NumericToken("patch")]));
+                else if (inner.StartsWith('*') && int.TryParse(inner[1..], out int ml))
+                    result.Add(new FreeTextToken(ml));
+                else
+                    result.Add(new ResetGroupToken(ParseSimple(inner)));
+                i = close + 1;
+            } else if (fmt[i] == '{') {
+                int close = fmt.IndexOf('}', i);
+                if (close < 0) { result.Add(new LiteralToken(fmt[i..])); break; }
+                result.Add(ParseBrace(fmt[(i + 1)..close]));
+                i = close + 1;
+            } else {
+                int j = i;
+                while (j < fmt.Length && fmt[j] != '[' && fmt[j] != '{') j++;
+                if (j > i) result.Add(new LiteralToken(fmt[i..j]));
+                i = j;
+            }
+        }
+        return [.. result];
+    }
+
+    static FormatToken[] ParseSimple(string fmt) {
+        var result = new List<FormatToken>();
+        int i = 0;
+        while (i < fmt.Length) {
+            if (fmt[i] == '{') {
+                int close = fmt.IndexOf('}', i);
+                if (close < 0) { result.Add(new LiteralToken(fmt[i..])); break; }
+                result.Add(ParseBrace(fmt[(i + 1)..close]));
+                i = close + 1;
+            } else {
+                int j = i;
+                while (j < fmt.Length && fmt[j] != '{') j++;
+                if (j > i) result.Add(new LiteralToken(fmt[i..j]));
+                i = j;
+            }
+        }
+        return [.. result];
+    }
+
+    static FormatToken ParseBrace(string inner) {
+        if (DateSpecs.Contains(inner))  return new DateToken(inner.ToUpper());
+        if (inner.StartsWith('#'))      return new NumericToken(inner[1..]);
+        if (inner.Contains('|'))        return new InlineListToken(inner.Split('|'));
+        return new NamedListToken(inner);
+    }
+
+    static int FindMatching(string s, int open, char openCh, char closeCh) {
+        int depth = 0;
+        for (int i = open; i < s.Length; i++) {
+            if (s[i] == openCh) depth++;
+            else if (s[i] == closeCh && --depth == 0) return i;
+        }
+        return s.Length - 1;
     }
 }
 
-public class SequentialScheme : IVersionScheme {
-    readonly string[] _tokens;
-    readonly bool _resetOnBump;
+// ── Format scheme ─────────────────────────────────────────────────────────────
 
-    public SequentialScheme(string format, bool resetOnBump) {
-        _tokens = format.Split('.');
-        _resetOnBump = resetOnBump;
-    }
+public class FormatScheme : IVersionScheme {
+    record TokenCtx(FormatToken Token, int ActionIdx, int? GroupId, int GroupPos);
 
-    public List<string> GetButtonLabels() => _tokens.ToList();
+    readonly FormatToken[] _tokens;
+    readonly List<TokenCtx> _interactive;
+    readonly List<(FormatToken Token, int ActionIdx)> _parsePlan;
 
-    public string Bump(string current, int partIndex) {
-        var parts = current.Split('.');
-        if (parts.Length != _tokens.Length) parts = _tokens.Select(_ => "0").ToArray();
-        int val = int.TryParse(parts[partIndex], out int v) ? v : 0;
-        parts[partIndex] = (val + 1).ToString();
-        if (_resetOnBump)
-            for (int i = partIndex + 1; i < parts.Length; i++) parts[i] = "0";
-        return string.Join(".", parts);
-    }
-}
+    public bool HasDateTokens { get; }
 
-public class CalVerScheme : IVersionScheme {
-    readonly string[] _tokens;
-    readonly bool _resetOnBump;
-    static readonly HashSet<string> DateTokens = new(StringComparer.OrdinalIgnoreCase)
-        { "YYYY", "YY", "MM", "DD" };
+    public FormatScheme(string format) {
+        _tokens      = FormatParser.Parse(format);
+        _interactive = [];
+        _parsePlan   = [];
+        int actionIdx = 0, groupIdCtr = 0;
 
-    public CalVerScheme(string format, bool resetOnBump) {
-        _tokens = format.Split('.');
-        _resetOnBump = resetOnBump;
+        void Walk(FormatToken t, int? gId, ref int gPos) {
+            switch (t) {
+                case ResetGroupToken rg: {
+                    int thisGroup = groupIdCtr++;
+                    int pos = 0;
+                    foreach (var inner in rg.Inner) Walk(inner, thisGroup, ref pos);
+                    break;
+                }
+                case LiteralToken lt: _parsePlan.Add((lt, -1)); break;
+                case DateToken dt:    _parsePlan.Add((dt, -1)); break;
+                default:
+                    _interactive.Add(new(t, actionIdx, gId, gPos));
+                    _parsePlan.Add((t, actionIdx));
+                    actionIdx++;
+                    if (gId.HasValue) gPos++;
+                    break;
+            }
+        }
+        int dummy = 0;
+        foreach (var t in _tokens) Walk(t, null, ref dummy);
+        HasDateTokens = _parsePlan.Any(p => p.Token is DateToken);
     }
 
     public List<string> GetButtonLabels() =>
-        _tokens.Select(t => DateTokens.Contains(t) ? null : t).ToList();
+        _interactive.Select(ctx => ctx.Token switch {
+            NumericToken n    => n.Name,
+            InlineListToken il => string.Join("|", il.Values),
+            _                  => null
+        }).ToList();
 
-    string DateValue(string token) => token.ToUpper() switch {
-        "YYYY" => DateTime.Today.Year.ToString(),
+    public string Bump(string current, int actionIdx) {
+        var values = ParseVersion(current);
+        values[actionIdx] = BumpValue(_interactive[actionIdx].Token, values[actionIdx]);
+        var ctx = _interactive[actionIdx];
+        if (ctx.GroupId.HasValue) {
+            for (int i = 0; i < _interactive.Count; i++) {
+                var other = _interactive[i];
+                if (other.GroupId == ctx.GroupId && other.GroupPos > ctx.GroupPos)
+                    values[i] = DefaultValue(other.Token);
+            }
+        }
+        return Render(values);
+    }
+
+    public string Refresh(string current) => Render(ParseVersion(current));
+
+    string[] ParseVersion(string version) {
+        var values = _interactive.Select(ctx => DefaultValue(ctx.Token)).ToArray();
+        try {
+            var pat = new System.Text.StringBuilder("^");
+            foreach (var (tok, ai) in _parsePlan) {
+                switch (tok) {
+                    case LiteralToken lt:
+                        pat.Append(System.Text.RegularExpressions.Regex.Escape(lt.Text)); break;
+                    case DateToken dt:
+                        int dlen = dt.Spec switch { "YYYY" => 4, "YYY" => 3, "MM" => 2, "DD" => 2, _ => 2 };
+                        pat.Append($@"\d{{{dlen}}}"); break;
+                    case NumericToken:
+                        pat.Append($@"(?<g{ai}>\d+)"); break;
+                    case InlineListToken il:
+                        pat.Append($"(?<g{ai}>{string.Join("|", il.Values.Select(System.Text.RegularExpressions.Regex.Escape))})"); break;
+                    default:
+                        pat.Append($@"(?<g{ai}>\S*)"); break;
+                }
+            }
+            pat.Append('$');
+            var m = System.Text.RegularExpressions.Regex.Match(version, pat.ToString(),
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (m.Success)
+                for (int i = 0; i < _interactive.Count; i++) {
+                    var g = m.Groups[$"g{i}"];
+                    if (g.Success) values[i] = g.Value;
+                }
+        } catch { }
+        return values;
+    }
+
+    string Render(string[] values) {
+        var sb = new System.Text.StringBuilder();
+        foreach (var (tok, ai) in _parsePlan) {
+            switch (tok) {
+                case LiteralToken lt: sb.Append(lt.Text); break;
+                case DateToken dt:    sb.Append(DateValue(dt.Spec)); break;
+                default: if (ai >= 0 && ai < values.Length) sb.Append(values[ai]); break;
+            }
+        }
+        return sb.ToString();
+    }
+
+    static string BumpValue(FormatToken t, string current) {
+        if (t is NumericToken)
+            return (int.TryParse(current, out int v) ? v + 1 : 1).ToString();
+        if (t is InlineListToken il) {
+            int idx = Array.IndexOf(il.Values, current);
+            return il.Values[(idx < 0 ? 0 : idx + 1) % il.Values.Length];
+        }
+        return current;
+    }
+
+    static string DefaultValue(FormatToken t) =>
+        t is InlineListToken il && il.Values.Length > 0 ? il.Values[0] : "0";
+
+    string DateValue(string spec) => spec switch {
+        "YYYY" => DateTime.Today.Year.ToString("D4"),
+        "YYY"  => (DateTime.Today.Year % 1000).ToString("D3"),
         "YY"   => (DateTime.Today.Year % 100).ToString("D2"),
+        "Y"    => (DateTime.Today.Year % 10).ToString(),
         "MM"   => DateTime.Today.Month.ToString("D2"),
         "DD"   => DateTime.Today.Day.ToString("D2"),
         _      => "0"
     };
-
-    public string Refresh(string current) {
-        var parts = current.Split('.');
-        if (parts.Length != _tokens.Length) parts = _tokens.Select(_ => "0").ToArray();
-        for (int i = 0; i < _tokens.Length; i++)
-            if (DateTokens.Contains(_tokens[i].ToUpper()))
-                parts[i] = DateValue(_tokens[i]);
-        return string.Join(".", parts);
-    }
-
-    public string Bump(string current, int partIndex) {
-        var parts = current.Split('.');
-        if (parts.Length != _tokens.Length) parts = _tokens.Select(_ => "0").ToArray();
-        for (int i = 0; i < _tokens.Length; i++)
-            if (DateTokens.Contains(_tokens[i].ToUpper()))
-                parts[i] = DateValue(_tokens[i]);
-        if (!DateTokens.Contains(_tokens[partIndex].ToUpper())) {
-            int val = int.TryParse(parts[partIndex], out int v) ? v : 0;
-            parts[partIndex] = (val + 1).ToString();
-            if (_resetOnBump)
-                for (int i = partIndex + 1; i < parts.Length; i++)
-                    if (!DateTokens.Contains(_tokens[i].ToUpper()))
-                        parts[i] = "0";
-        }
-        return string.Join(".", parts);
-    }
 }
 
+// ── Scheme factory ────────────────────────────────────────────────────────────
+
 public static class SchemeFactory {
-    public static IVersionScheme Create(ProjectEntry entry) => entry.Scheme.ToLower() switch {
-        "semver"     => new SemVerScheme(entry.ResetOnBump),
-        "calver"     => new CalVerScheme(
-            string.IsNullOrWhiteSpace(entry.Format) ? "YY.MM.patch" : entry.Format,
-            entry.ResetOnBump),
-        "sequential" => new SequentialScheme(
-            string.IsNullOrWhiteSpace(entry.Format) ? "major.minor.patch" : entry.Format,
-            entry.ResetOnBump),
-        _ => new SemVerScheme()
-    };
+    public static IVersionScheme Create(ProjectEntry entry) =>
+        new FormatScheme(FormatFor(entry));
+
+    public static string FormatFor(ProjectEntry entry) {
+        // New-style format string already contains { or [
+        if (!string.IsNullOrWhiteSpace(entry.Format) &&
+            (entry.Format.Contains('{') || entry.Format.Contains('[')))
+            return entry.Format;
+        // Old dot-separated format (calver/sequential migration)
+        if (!string.IsNullOrWhiteSpace(entry.Format))
+            return MigrateOldFormat(entry.Format, entry.Scheme, entry.ResetOnBump);
+        // Derive from scheme name
+        return entry.Scheme?.ToLower() switch {
+            "calver"     => "{YY}.{MM}.{#patch}",
+            "sequential" => entry.ResetOnBump ? "[{#major}.{#minor}.{#patch}]"
+                                              : "{#major}.{#minor}.{#patch}",
+            _            => entry.ResetOnBump ? "[sem]"
+                                              : "{#major}.{#minor}.{#patch}",
+        };
+    }
+
+    static readonly HashSet<string> OldDateParts =
+        new(StringComparer.OrdinalIgnoreCase) { "YYYY", "YYY", "YY", "Y", "MM", "DD" };
+
+    static string MigrateOldFormat(string old, string scheme, bool reset) {
+        var parts = old.Split('.');
+        bool hasDate = parts.Any(p => OldDateParts.Contains(p));
+        string converted = string.Join(".", parts.Select(p =>
+            OldDateParts.Contains(p) ? $"{{{p.ToUpper()}}}" : $"{{#{p}}}"));
+        return reset && !hasDate ? $"[{converted}]" : converted;
+    }
 }
 
 // ── Phosphor Icons ─────────────────────────────────────────────────────────────
@@ -338,30 +495,29 @@ class DarkColorTable : ProfessionalColorTable {
         public override Color ImageMarginGradientEnd          => Bg;
     }
 
-    static string OverrideSettingsPath = null;
-    static string InitialVersionPath   = null;
-    static int    SilentBumpPart       = -1;   // 0-based; -1 = no silent bump
-    static bool   CheckMode            = false;
+    static string       OverrideSettingsPath = null;
+    static List<string> InitialVersionPaths  = new();
+    static int          SilentBumpPart       = -1;   // 0-based; -1 = no silent bump
+    static bool         CheckMode            = false;
 
     [STAThread]
     public static void Main(string[] args) {
         foreach (var arg in args) {
-            if (arg.StartsWith("/settings=", StringComparison.OrdinalIgnoreCase) ||
-                arg.StartsWith("--settings=", StringComparison.OrdinalIgnoreCase)) {
-                OverrideSettingsPath = arg[(arg.IndexOf('=') + 1)..].Trim('"');
-            } else if (arg.StartsWith("--bump=", StringComparison.OrdinalIgnoreCase)) {
+            if (arg.StartsWith("--bump=", StringComparison.OrdinalIgnoreCase)) {
                 if (int.TryParse(arg[7..], out int b) && b >= 1 && b <= 4)
                     SilentBumpPart = b - 1;
             } else if (arg.Equals("--check", StringComparison.OrdinalIgnoreCase)) {
                 CheckMode = true;
             } else {
-                // bare path → VERSION file or directory containing one
-                string p = arg.Trim('"');
-                if (File.Exists(p) && Path.GetFileName(p).Equals("VERSION", StringComparison.OrdinalIgnoreCase))
-                    InitialVersionPath = p;
+                string p   = arg.Trim('"');
+                string ext = Path.GetExtension(p).ToLowerInvariant();
+                if ((ext == ".json" || ext == ".json5") && File.Exists(p))
+                    OverrideSettingsPath = p;
+                else if (File.Exists(p) && Path.GetFileName(p).Equals("VERSION", StringComparison.OrdinalIgnoreCase))
+                    InitialVersionPaths.Add(p);
                 else if (Directory.Exists(p)) {
                     string v = Path.Combine(p, "VERSION");
-                    if (File.Exists(v)) InitialVersionPath = v;
+                    if (File.Exists(v)) InitialVersionPaths.Add(v);
                 }
             }
         }
@@ -390,55 +546,62 @@ class DarkColorTable : ProfessionalColorTable {
             }
         } catch (Exception ex) { Log.Write("Run/version", ex); }
 
-        string jsonPath = OverrideSettingsPath ?? Path.Combine(appDataDir, "VerBump-settings.json");
-        if (!File.Exists(jsonPath)) {
-            var dummy = new Settings {
-                IgnoreDirs  = [..DefaultIgnoreDirs],
-                IgnoreFiles = [..DefaultIgnoreFiles],
-                Paths = new List<ProjectEntry> {
-                    new ProjectEntry { Path = @"C:\Beispiel\Pfad1", Scheme = "semver" }
-                }
-            };
-            File.WriteAllText(jsonPath, JsonSerializer.Serialize(dummy, new JsonSerializerOptions { WriteIndented = true }));
-            using var md = new Form {
-                Text = "VerBump", Width = 520, Height = 150,
-                StartPosition = FormStartPosition.CenterScreen,
-                FormBorderStyle = FormBorderStyle.FixedDialog,
-                MaximizeBox = false, MinimizeBox = false,
-                BackColor = Color.FromArgb(45, 45, 48), ForeColor = Color.White,
-            };
-            new Label { Parent = md, Left = 16, Top = 16, Width = 480, Height = 52,
-                Text = L.T("settings.created", jsonPath),
-                Font = new Font("Segoe UI", 9F), ForeColor = Color.White };
-            var mdOk = new Button { Parent = md, Text = "OK", Left = 412, Top = 74, Width = 80, Height = 28,
-                FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = Color.White,
-                DialogResult = DialogResult.OK };
-            md.AcceptButton = mdOk;
-            md.ShowDialog();
-            return;
+        // unsaved mode: VERSION/folder args without --bump/--check → skip settings file entirely
+        bool unsavedMode = InitialVersionPaths.Count > 0 && OverrideSettingsPath == null
+                        && SilentBumpPart < 0 && !CheckMode;
+
+        string   jsonPath = null;
+        Settings settings = new();
+
+        if (!unsavedMode) {
+            jsonPath = OverrideSettingsPath ?? Path.Combine(appDataDir, "VerBump-settings.json");
+            if (!File.Exists(jsonPath)) {
+                var dummy = new Settings {
+                    IgnoreDirs  = [..DefaultIgnoreDirs],
+                    IgnoreFiles = [..DefaultIgnoreFiles],
+                    Paths = new List<ProjectEntry> {
+                        new ProjectEntry { Path = @"C:\Beispiel\Pfad1", Scheme = "semver" }
+                    }
+                };
+                File.WriteAllText(jsonPath, JsonSerializer.Serialize(dummy, new JsonSerializerOptions { WriteIndented = true }));
+                using var md = new Form {
+                    Text = "VerBump", Width = 520, Height = 150,
+                    StartPosition = FormStartPosition.CenterScreen,
+                    FormBorderStyle = FormBorderStyle.FixedDialog,
+                    MaximizeBox = false, MinimizeBox = false,
+                    BackColor = Color.FromArgb(45, 45, 48), ForeColor = Color.White,
+                };
+                new Label { Parent = md, Left = 16, Top = 16, Width = 480, Height = 52,
+                    Text = L.T("settings.created", jsonPath),
+                    Font = new Font("Segoe UI", 9F), ForeColor = Color.White };
+                var mdOk = new Button { Parent = md, Text = "OK", Left = 412, Top = 74, Width = 80, Height = 28,
+                    FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = Color.White,
+                    DialogResult = DialogResult.OK };
+                md.AcceptButton = mdOk;
+                md.ShowDialog();
+                return;
+            }
+            try { settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(jsonPath), new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) ?? new Settings(); }
+            catch (Exception ex) { Log.Write("Run/json", ex); MessageBox.Show(L.T("error.json", ex.Message)); return; }
+            if (OverrideSettingsPath != null) AddRecentSetting(OverrideSettingsPath);
         }
 
-        Settings settings;
-        try { settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(jsonPath), new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) ?? new Settings(); }
-        catch (Exception ex) { Log.Write("Run/json", ex); MessageBox.Show(L.T("error.json", ex.Message)); return; }
-
-        if (OverrideSettingsPath != null) AddRecentSetting(OverrideSettingsPath);
-
         // ── Silent bump from Explorer context menu (--bump=N) ─────────────────
-        if (SilentBumpPart >= 0 && InitialVersionPath != null) {
-            RunSilentBump(settings, InitialVersionPath, SilentBumpPart);
+        string singleVersionPath = InitialVersionPaths.Count > 0 ? InitialVersionPaths[0] : null;
+        if (SilentBumpPart >= 0 && singleVersionPath != null) {
+            RunSilentBump(settings, singleVersionPath, SilentBumpPart);
             return;
         }
 
         // ── Check mode (--check): used by git pre-commit hook ─────────────────
-        if (CheckMode && InitialVersionPath == null) {
+        if (CheckMode && singleVersionPath == null) {
             string v = Path.Combine(Directory.GetCurrentDirectory(), "VERSION");
-            if (File.Exists(v)) InitialVersionPath = v;
+            if (File.Exists(v)) singleVersionPath = v;
         }
         HashSet<string> checkIgnoreDirs  = null;
         List<string>    checkIgnoreFiles = null;
-        if (CheckMode && InitialVersionPath != null) {
-            string vf = Path.GetFullPath(InitialVersionPath);
+        if (CheckMode && singleVersionPath != null) {
+            string vf = Path.GetFullPath(singleVersionPath);
             var ce = settings.Paths?.FirstOrDefault(p => {
                 try { return string.Equals(Path.GetFullPath(Path.Combine(p.Path.Trim('"'), "VERSION")), vf, StringComparison.OrdinalIgnoreCase); }
                 catch { return false; }
@@ -451,19 +614,19 @@ class DarkColorTable : ProfessionalColorTable {
             // VERSION is stale → fall through and show the main UI
         }
 
-        // Prüfen ob InitialVersionPath nicht in settings.json ist → unsaved entry
-        bool willHaveUnsavedEntry = InitialVersionPath != null &&
-            File.Exists(InitialVersionPath) &&
-            !(settings.Paths ?? []).Any(p => {
-                try { return string.Equals(
-                    Path.GetFullPath(Path.Combine(p.Path.Trim().TrimEnd(Path.DirectorySeparatorChar, '/'), "VERSION")),
-                    Path.GetFullPath(InitialVersionPath), StringComparison.OrdinalIgnoreCase); }
-                catch { return false; }
-            });
+        bool willHaveUnsavedEntry = unsavedMode;
 
+        string formTitle = $"VerBump  v{appVersion}";
+        if (unsavedMode) {
+            formTitle = InitialVersionPaths.Count == 1
+                ? $"VerBump  v{appVersion}  —  {Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(InitialVersionPaths[0])))}"
+                : $"VerBump  v{appVersion}  —  {InitialVersionPaths.Count} Projekte";
+        } else if (OverrideSettingsPath != null) {
+            formTitle = $"VerBump  v{appVersion}  —  {Path.GetFileName(OverrideSettingsPath)}";
+        }
         using var form = new Form {
-            Text = willHaveUnsavedEntry ? $"VerBump  v{appVersion}  —  {Path.GetDirectoryName(InitialVersionPath)}" : $"VerBump  v{appVersion}",
-            Width = 720, Height = 80 + (willHaveUnsavedEntry ? 1 : settings.Paths.Count) * 55 + 138,
+            Text = formTitle,
+            Width = 720, Height = 80 + (willHaveUnsavedEntry ? InitialVersionPaths.Count : settings.Paths.Count) * 55 + 138,
             StartPosition = FormStartPosition.CenterScreen,
             KeyPreview = true,
             BackColor = Color.FromArgb(45, 45, 48), ForeColor = Color.White
@@ -522,7 +685,7 @@ class DarkColorTable : ProfessionalColorTable {
                 : Path.GetFileName(cleanPath) ?? L.T("project.unnamed");
             IVersionScheme scheme = SchemeFactory.Create(entry);
 
-            if (entry.Scheme.ToLower() == "calver")
+            if (scheme.HasDateTokens)
                 currentV = scheme.Refresh(currentV);
 
             // ── Projekt-Icon laden (optional) ──
@@ -622,20 +785,14 @@ class DarkColorTable : ProfessionalColorTable {
             uiEntries.Add(new ProjectUI { SelectionPanel = selectionPanel, StatusStrip = strip, VersionBox = tb, FilePath = vFile, OriginalVersion = currentV, Scheme = scheme, Backup = entry.Backup, Entry = entry });
         }
 
-        // ── Pre-select project from command-line VERSION path ──────────────────
-        if (InitialVersionPath != null && !willHaveUnsavedEntry) {
-            string target = Path.GetFullPath(InitialVersionPath);
-            int idx = uiEntries.FindIndex(u => string.Equals(Path.GetFullPath(u.FilePath), target, StringComparison.OrdinalIgnoreCase));
-            if (idx >= 0) selectedIndex = idx;
-        }
-
-        // ── Unsaved entry: InitialVersionPath nicht in settings.json ───────────
-        if (willHaveUnsavedEntry) {
-            string target    = Path.GetFullPath(InitialVersionPath);
-            string cleanPath = Path.GetDirectoryName(target);
-            string currentV  = File.ReadAllText(target).Trim();
+        // ── Unsaved entries: VERSION paths passed via CLI (unsaved mode) ──────────
+        foreach (string versionPath in InitialVersionPaths) {
+            if (!File.Exists(versionPath)) continue;
+            string target      = Path.GetFullPath(versionPath);
+            string cleanPath   = Path.GetDirectoryName(target);
+            string currentV    = File.ReadAllText(target).Trim();
             string projectName = Path.GetFileName(cleanPath) ?? target;
-            var entry = new ProjectEntry { Path = cleanPath, Scheme = "semver", ResetOnBump = true };
+            var entry  = new ProjectEntry { Path = cleanPath, Scheme = "semver", ResetOnBump = true };
             IVersionScheme scheme = SchemeFactory.Create(entry);
 
             var selectionPanel = new Panel { Width = 680, Height = 50, Margin = new Padding(0, 3, 0, 3), BackColor = Color.Transparent };
@@ -844,7 +1001,8 @@ class DarkColorTable : ProfessionalColorTable {
                     var lbls = uiEntries[i].Scheme.GetButtonLabels();
                     var schemeNames = lbls.Where(l => l != null).Select((l, idx) => L.T("status.shortcut", idx + 1, l));
                     string backupStatus = uiEntries[i].Backup ? L.T("status.backup_on") : L.T("status.backup_off");
-                    setStatus($"{L.T("status.scheme", uiEntries[i].Entry.Scheme)}   {string.Join("  ", schemeNames)}   {backupStatus}", false);
+                    string fmtDisplay = SchemeFactory.FormatFor(uiEntries[i].Entry);
+                    setStatus($"{fmtDisplay}   {string.Join("  ", schemeNames)}   {backupStatus}", false);
                 }
             }
             tsAddProject.Visible = selectedIndex >= 0 && selectedIndex < uiEntries.Count && uiEntries[selectedIndex].IsUnsaved;
@@ -880,9 +1038,17 @@ class DarkColorTable : ProfessionalColorTable {
             if (selectedIndex < 0 || selectedIndex >= uiEntries.Count) return;
             var ui = uiEntries[selectedIndex];
             if (!ui.IsUnsaved) return;
-            settings.Paths.Add(ui.Entry);
+            // In unsaved mode jsonPath is null — fall back to default settings file
+            string targetJson = jsonPath ?? Path.Combine(appDataDir, "VerBump-settings.json");
+            Settings targetSettings = settings;
+            if (jsonPath == null && File.Exists(targetJson)) {
+                try { targetSettings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(targetJson),
+                    new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) ?? new(); }
+                catch { targetSettings = new(); }
+            }
+            targetSettings.Paths.Add(ui.Entry);
             try {
-                File.WriteAllText(jsonPath, JsonSerializer.Serialize(settings,
+                File.WriteAllText(targetJson, JsonSerializer.Serialize(targetSettings,
                     new JsonSerializerOptions { WriteIndented = true }));
                 ui.IsUnsaved = false;
                 ui.StatusStrip.BackColor = Color.FromArgb(80, 80, 80);
@@ -946,7 +1112,7 @@ class DarkColorTable : ProfessionalColorTable {
                         ui.VersionBox.BackColor = Color.DarkGreen;
                         e.Handled = true;
                     } else {
-                        setStatus(L.T("error.bump_unavailable", part + 1, settings.Paths[selectedIndex].Scheme), true);
+                        setStatus(L.T("error.bump_unavailable", part + 1, SchemeFactory.FormatFor(settings.Paths[selectedIndex])), true);
                         e.Handled = true;
                     }
                 }
@@ -1032,8 +1198,8 @@ class DarkColorTable : ProfessionalColorTable {
         statusTimer.Dispose();
 
         // ── Check mode: re-check after UI and signal the hook ─────────────────
-        if (CheckMode && InitialVersionPath != null) {
-            string vf      = Path.GetFullPath(InitialVersionPath);
+        if (CheckMode && singleVersionPath != null) {
+            string vf      = Path.GetFullPath(singleVersionPath);
             var newerFiles = GetNewerFiles(vf, 1, checkIgnoreDirs, checkIgnoreFiles);
             Environment.Exit(newerFiles.Count > 0 ? 1 : 0);
         }
@@ -1058,7 +1224,7 @@ class DarkColorTable : ProfessionalColorTable {
         Font  fMono   = new Font("Consolas", 9F);
 
         using var dlg = new Form {
-            Text = L.T("settings.title"), Width = 620, Height = 696,
+            Text = L.T("settings.title"), Width = 620, Height = 664,
             StartPosition = FormStartPosition.CenterParent,
             BackColor = bgMid, ForeColor = fgW,
             FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -1100,7 +1266,7 @@ class DarkColorTable : ProfessionalColorTable {
 
         // ── Detail group ──────────────────────────────────────────────────────
         var grp = new GroupBox {
-            Parent = dlg, Text = "Entry", Left = 12, Top = 250, Width = 576, Height = 350,
+            Parent = dlg, Text = "Entry", Left = 12, Top = 250, Width = 576, Height = 318,
             Font = fUI, ForeColor = Color.LightGray,
         };
 
@@ -1112,42 +1278,47 @@ class DarkColorTable : ProfessionalColorTable {
         var lblStatus = new Label { Parent = grp, Left = 96, Top = 50, Width = 460, Height = 18, Font = new Font("Segoe UI", 8.5F) };
         GrpLbl("Name:",    76); var tbName   = GrpTb(76, 460);
         GrpLbl("Icon:",   108); var tbIcon   = GrpTb(108, 368); var btnBrowseIcon = BrowseBtn(108);
-        GrpLbl("Scheme:", 138);
-        var cbScheme = new ComboBox { Parent = grp, Left = 96, Top = 138, Width = 120, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = bgLight, ForeColor = fgW, FlatStyle = FlatStyle.Flat, Font = fUI };
-        cbScheme.Items.AddRange(new object[] { "semver", "calver", "sequential" });
-        var cbReset  = new CheckBox { Parent = grp, Text = "Reset on bump", Left = 230, Top = 140, Width = 130, Font = fUI, ForeColor = fgW };
-        var cbBackup = new CheckBox { Parent = grp, Text = "Backup",        Left = 370, Top = 140, Width = 90,  Font = fUI, ForeColor = fgW };
-        var lblFormat = GrpLbl("Format:", 170); var tbFormat = GrpTb(170, 460);
+        var cbBackup = new CheckBox { Parent = grp, Text = "Backup", Left = 430, Top = 140, Width = 90, Font = fUI, ForeColor = fgW };
+        var tipFmt   = new ToolTip();
+        var lblFormat = GrpLbl("Format:", 138); var tbFormat = GrpTb(138, 320);
+        tipFmt.SetToolTip(tbFormat,
+            "Format-String — Beispiele:\r\n" +
+            "  [sem]                          → 1.2.3  (SemVer mit Reset)\r\n" +
+            "  {#major}.{#minor}              → kein Reset\r\n" +
+            "  {YYYY}.{MM}.{#build}           → 2026.03.47\r\n" +
+            "  {YYYY}.[{#major}.{#minor}.{#patch}]\r\n" +
+            "  [{#major}.{#minor}]-{alpha|beta|prod}\r\n" +
+            "  [*8]                           → Freitext, max. 8 Zeichen");
 
         // ── Per-project ignore ─────────────────────────────────────────────────
         new Label {
-            Parent = grp, Left = 8, Top = 202, Width = 556, Height = 14,
+            Parent = grp, Left = 8, Top = 170, Width = 556, Height = 14,
             Text = "Per-project ignore  (prefix ! to re-include a global entry)",
             Font = new Font("Segoe UI", 7.5F, FontStyle.Italic),
             ForeColor = Color.FromArgb(140, 140, 145),
         };
         var tipIgnore = new ToolTip();
-        tipIgnore.SetToolTip(GrpLbl("Dirs:",  218), "One entry per line.\nPrefix ! to re-include a global entry, e.g. !bin");
-        var tbIgnoreDirs  = new TextBox { Parent = grp, Left = 96, Top = 216, Width = 460, Height = 38, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical };
+        tipIgnore.SetToolTip(GrpLbl("Dirs:",  186), "One entry per line.\nPrefix ! to re-include a global entry, e.g. !bin");
+        var tbIgnoreDirs  = new TextBox { Parent = grp, Left = 96, Top = 184, Width = 460, Height = 38, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical };
         tipIgnore.SetToolTip(tbIgnoreDirs, "One entry per line.\nPrefix ! to re-include a global entry, e.g. !bin");
-        tipIgnore.SetToolTip(GrpLbl("Files:", 262), "One pattern per line (e.g. *.bak).\nPrefix ! to re-include a global pattern.");
-        var tbIgnoreFiles = new TextBox { Parent = grp, Left = 96, Top = 260, Width = 460, Height = 38, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical };
+        tipIgnore.SetToolTip(GrpLbl("Files:", 230), "One pattern per line (e.g. *.bak).\nPrefix ! to re-include a global pattern.");
+        var tbIgnoreFiles = new TextBox { Parent = grp, Left = 96, Top = 228, Width = 460, Height = 38, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical };
         tipIgnore.SetToolTip(tbIgnoreFiles, "One pattern per line (e.g. *.bak).\nPrefix ! to re-include a global pattern.");
 
         // ── Git hook ──────────────────────────────────────────────────────────
         var btnHook = new Button {
-            Parent = grp, Left = 96, Top = 310, Width = 220, Height = 26,
+            Parent = grp, Left = 96, Top = 278, Width = 220, Height = 26,
             FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI,
             Text = "Git-Hook installieren",
         };
         var lblHookInfo = new Label {
-            Parent = grp, Left = 326, Top = 313, Width = 226, Height = 20,
+            Parent = grp, Left = 326, Top = 281, Width = 226, Height = 20,
             Font = new Font("Segoe UI", 8F), ForeColor = Color.FromArgb(130, 130, 135),
             Text = "pre-commit hook für dieses Repo",
         };
         // ── Save / Cancel ─────────────────────────────────────────────────────
-        var btnSave   = new Button { Parent = dlg, Text = L.T("btn.save"),   Left = 396, Top = 610, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
-        var btnCancel = new Button { Parent = dlg, Text = L.T("btn.cancel"), Left = 504, Top = 610, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI, DialogResult = DialogResult.Cancel };
+        var btnSave   = new Button { Parent = dlg, Text = L.T("btn.save"),   Left = 396, Top = 578, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
+        var btnCancel = new Button { Parent = dlg, Text = L.T("btn.cancel"), Left = 504, Top = 578, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI, DialogResult = DialogResult.Cancel };
         dlg.CancelButton = btnCancel;
 
         // ── Logic ─────────────────────────────────────────────────────────────
@@ -1201,15 +1372,10 @@ class DarkColorTable : ProfessionalColorTable {
             tbPath.Text   = e.Path;
             tbName.Text   = e.Name;
             tbIcon.Text   = e.Icon;
-            cbScheme.SelectedItem = e.Scheme;
-            if (cbScheme.SelectedIndex < 0) cbScheme.SelectedIndex = 0;
-            tbFormat.Text    = e.Format;
-            cbReset.Checked  = e.ResetOnBump;
+            tbFormat.Text    = SchemeFactory.FormatFor(e);
             cbBackup.Checked = e.Backup;
             tbIgnoreDirs.Text  = ListToText(e.IgnoreDirs);
             tbIgnoreFiles.Text = ListToText(e.IgnoreFiles);
-            bool showFmt = e.Scheme.ToLower() != "semver";
-            lblFormat.Visible = tbFormat.Visible = showFmt;
             string dir = e.Path.Trim('"');
             bool hasGit = Directory.Exists(Path.Combine(dir, ".git"));
             btnHook.Enabled = hasGit;
@@ -1224,9 +1390,7 @@ class DarkColorTable : ProfessionalColorTable {
             e.Path        = tbPath.Text;
             e.Name        = tbName.Text;
             e.Icon        = tbIcon.Text;
-            e.Scheme      = cbScheme.SelectedItem?.ToString() ?? "semver";
             e.Format      = tbFormat.Text;
-            e.ResetOnBump = cbReset.Checked;
             e.Backup      = cbBackup.Checked;
             e.IgnoreDirs  = TextToList(tbIgnoreDirs.Text);
             e.IgnoreFiles = TextToList(tbIgnoreFiles.Text);
@@ -1263,14 +1427,7 @@ class DarkColorTable : ProfessionalColorTable {
                 else                  { InstallGitHook(dir); btnHook.Text = "Git-Hook entfernen"; }
             } catch (Exception ex) { MessageBox.Show(ex.Message, "VerBump"); }
         };
-        cbReset.CheckedChanged  += (s, e) => { if (!loading) Flush(); };
         cbBackup.CheckedChanged += (s, e) => { if (!loading) Flush(); };
-        cbScheme.SelectedIndexChanged += (s, e) => {
-            if (loading) return;
-            bool showFmt = cbScheme.SelectedItem?.ToString().ToLower() != "semver";
-            lblFormat.Visible = tbFormat.Visible = showFmt;
-            Flush();
-        };
 
         btnBrowsePath.Click += (s, e) => {
             using var fbd = new FolderBrowserDialog { Description = "Select project folder", UseDescriptionForTitle = true };
@@ -1290,7 +1447,7 @@ class DarkColorTable : ProfessionalColorTable {
 
         btnAdd.Click += (s, e) => {
             Flush();
-            entries.Add(new ProjectEntry { Scheme = "semver", ResetOnBump = true });
+            entries.Add(new ProjectEntry { Format = "[sem]", ResetOnBump = true });
             RefreshList(entries.Count - 1);
         };
 

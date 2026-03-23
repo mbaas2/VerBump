@@ -68,7 +68,7 @@ Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.VERSION\shell\Bump3\comman
 Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Settings";           ValueType: string; ValueName: "";          ValueData: "In VerBump öffnen";                                   Flags: uninsdeletekey; Tasks: settingsmenu
 Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Settings";           ValueType: string; ValueName: "Icon";      ValueData: "{app}\{#AppExeName},0";                               Tasks: settingsmenu
 Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Settings";           ValueType: string; ValueName: "AppliesTo"; ValueData: "System.FileName: ""settings.json""";                 Tasks: settingsmenu
-Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Settings\command";   ValueType: string; ValueName: "";          ValueData: """{app}\{#AppExeName}"" --settings=""%1""";          Tasks: settingsmenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\VerBump.Settings\command";   ValueType: string; ValueName: "";          ValueData: """{app}\{#AppExeName}"" ""%1""";                      Tasks: settingsmenu
 ; Kontextmenü für Ordner-Hintergrund (Rechtsklick im Ordner)
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\VerBump";         ValueType: string; ValueName: "";     ValueData: "Mit VerBump öffnen";              Flags: uninsdeletekey; Tasks: contextmenu
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\VerBump";         ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#AppExeName},0";           Tasks: contextmenu
