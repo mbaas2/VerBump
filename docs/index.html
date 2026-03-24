@@ -123,7 +123,11 @@
       <div class="buttons is-centered">
         <a class="button is-success is-medium btn-download"
            href="https://github.com/mbaas2/VerBump/releases/latest">
-          ⬇ Download latest release
+          ⬇ Download installer
+        </a>
+        <a class="button is-light is-medium"
+           href="https://github.com/mbaas2/VerBump/releases/latest/download/VerBump.exe">
+          ⬇ Portable .exe
         </a>
         <a class="button is-dark is-medium"
            href="https://github.com/mbaas2/VerBump" target="_blank" rel="noopener">
@@ -131,7 +135,7 @@
         </a>
       </div>
       <p class="has-text-grey mt-4 hero-meta">
-        Windows 10/11 · Self-contained · No installer required · Free &amp; open source
+        Windows 10/11 · Installer or portable .exe · Free &amp; open source
       </p>
     </div>
   </div>
@@ -157,6 +161,12 @@
             of all my repos at a glance — orange means something changed and the version
             hasn't been bumped yet. It works because it forces a moment of reflection:
             one glance, all projects, before anything goes out.
+          </p>
+          <p class="is-size-5 mb-4">
+            Actually, VerBump has since changed my workflow entirely: with the git hook
+            installed, I no longer open it manually at all. The hook fires before each
+            commit and shows me exactly what's stale — I bump right there, or skip if it's
+            just a WIP commit. I haven't forgotten a version bump in months.
           </p>
           <p class="is-size-5 mb-4">
             It saves me more worry, rework, and time than I spent building it.
@@ -295,6 +305,7 @@
           <h3 class="title is-5">Explorer context menu</h3>
           <p>Right-click any folder or <code>VERSION</code> file to open VerBump or silently
              bump Major&thinsp;/&thinsp;Minor&thinsp;/&thinsp;Patch — no window, just a toast notification.</p>
+          <p class="is-size-7 has-text-grey mt-2">Requires installer. Settings files must be named <code>verbump-settings.json</code> to appear in the context menu.</p>
         </div>
       </div>
 
@@ -349,41 +360,51 @@
             </tr>
             <tr>
               <td><strong>Related project groups</strong> (e.g. a backend + mobile + shared lib)</td>
-              <td>Create one <code>settings.json</code> per group. Use the <em>Open settings…</em>
-                  toolbar button to switch between them — the last few are remembered.</td>
+              <td>Create one <code>verbump-settings.json</code> per group. Use <em>File › Open Settings File</em>
+                  to switch between them — the last few are remembered.
+                  The <code>verbump-settings.json</code> name also enables the Explorer context menu entry.</td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- Version schemes -->
-    <div class="content mb-6">
-      <h3>Version schemes</h3>
+    <!-- Format strings -->
+    <div class="content mb-6" id="format">
+      <h3>Format strings</h3>
+      <p>Each project's version scheme is defined by a single <strong>format string</strong>.
+         The Settings dialog shows a live preview as you type, and a <strong>?</strong> button
+         links here.</p>
       <div class="table-container">
         <table class="table is-bordered is-striped is-narrow scheme-table">
           <thead>
-            <tr><th>Scheme</th><th>Example</th><th>Bump buttons</th><th>Notes</th></tr>
+            <tr><th>Token</th><th>Meaning</th><th>Example result</th></tr>
           </thead>
           <tbody>
-            <tr>
-              <td>semver</td><td>1.4.2</td>
-              <td>Major · Minor · Patch</td>
-              <td>Default. Lower parts reset to 0 on bump when "Reset on bump" is checked.</td>
-            </tr>
-            <tr>
-              <td>calver</td><td>25.03.1</td>
-              <td>Date parts auto-updated · numeric parts bumpable</td>
-              <td>Format configurable, e.g. <code>YY.MM.patch</code> or <code>YYYY.MM.DD.build</code>.</td>
-            </tr>
-            <tr>
-              <td>sequential</td><td>major.minor.patch</td>
-              <td>One button per part</td>
-              <td>Fully custom part names via the Format field, e.g. <code>release.build</code>.</td>
-            </tr>
+            <tr><td>[sem]</td><td>SemVer shorthand — expands to <code>[{#major}.{#minor}.{#patch}]</code></td><td>1.2.3</td></tr>
+            <tr><td>{#name}</td><td>Numeric counter — a bump button increments it by 1</td><td><code>{#major}.{#minor}</code> → 1.0</td></tr>
+            <tr><td>{YYYY} {YY} {MM} {DD}</td><td>Date tokens — auto-filled on every refresh, no button generated</td><td><code>{YYYY}.{MM}.{#build}</code> → 2026.03.0</td></tr>
+            <tr><td>{val1|val2|val3}</td><td>Inline list — bump button cycles through the values</td><td><code>{alpha|beta|prod}</code> → alpha</td></tr>
+            <tr><td>{listname}</td><td>Named list — values defined globally under <em>Settings → Lists</em></td><td><code>{stage}</code></td></tr>
+            <tr><td>[*N]</td><td>Free-text field, max N characters — one bump button</td><td><code>[*8]</code></td></tr>
+            <tr><td>[…]</td><td><strong>Reset group</strong> — bumping any token resets all subsequent tokens in the group to their default (0 or first list value)</td><td><code>[{#major}.{#minor}.{#patch}]</code></td></tr>
           </tbody>
         </table>
       </div>
+      <p><strong>Examples:</strong></p>
+      <div class="table-container">
+        <table class="table is-bordered is-narrow scheme-table">
+          <thead><tr><th>Format string</th><th>Example version</th><th>Bump buttons</th></tr></thead>
+          <tbody>
+            <tr><td>[sem]</td><td>1.2.3</td><td>major+ &nbsp;·&nbsp; minor+ &nbsp;·&nbsp; patch+</td></tr>
+            <tr><td>{YYYY}.{MM}.{#build}</td><td>2026.03.47</td><td>build+</td></tr>
+            <tr><td>[{#major}.{#minor}]-{alpha|beta|prod}</td><td>1.0-alpha</td><td>major+ &nbsp;·&nbsp; minor+ &nbsp;·&nbsp; alpha|beta|prod+</td></tr>
+            <tr><td>{YYYY}.[{#major}.{#minor}.{#patch}]</td><td>2026.1.0.0</td><td>major+ &nbsp;·&nbsp; minor+ &nbsp;·&nbsp; patch+</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="is-size-7 has-text-grey">Old-style settings (<code>semver</code>, <code>calver</code>, <code>sequential</code>) are
+         automatically migrated on first load — no changes to your <code>settings.json</code> required.</p>
     </div>
 
     <!-- Keyboard shortcuts -->
@@ -420,13 +441,34 @@
       <pre><code>VerBump.exe --check          # check project in current directory
 VerBump.exe --check C:\my\project</code></pre>
       <p>Exit code <code>0</code> = VERSION is current &nbsp;·&nbsp; <code>1</code> = stale (commit blocked).</p>
-      <div class="notification is-warning is-light mt-4">
-        <strong>When to use this:</strong> The hook makes most sense if you follow a
-        <em>bump-before-push</em> workflow — one deliberate "release commit" where you bump
-        the version before anything goes out. If you commit frequently during development
-        without bumping, the hook will block every commit and quickly become annoying.
-        Skip it for a single commit with <code>git commit --no-verify</code>, or remove
-        it from Settings until you're ready to ship.
+      <p>
+        The hook dialog shows only the stale project (not all projects in your settings).
+        Three buttons are available:
+      </p>
+      <ul>
+        <li><strong>✓ Bump &amp; Commit</strong> — bump the version, then let the commit proceed.</li>
+        <li><strong>↷ Skip This Time</strong> — let this commit through without bumping
+            (useful for WIP commits or doc-only changes).</li>
+        <li><strong>✗ Block Commit</strong> — abort the commit (exit&nbsp;1).</li>
+      </ul>
+      <p>
+        <strong>Corporate deployments:</strong> to enforce bumping on every commit and remove
+        the <em>Skip This Time</em> option, create
+        <code>C:\ProgramData\VerBump\policy.json</code>:
+      </p>
+      <pre><code>{ "allowHookBypass": false }</code></pre>
+      <p>
+        This file is read at machine level; users cannot override it. Deploy it via installer
+        or Group Policy as needed. When <code>allowHookBypass</code> is <code>false</code>,
+        only <em>Bump &amp; Commit</em> and <em>Block Commit</em> are shown.
+      </p>
+      <div class="notification is-info is-light mt-4">
+        <strong>The hook fits any commit style.</strong>
+        Click <strong>Skip This Time</strong> for WIP commits or doc-only changes — no need
+        for <code>git commit --no-verify</code>. The bump prompt appears whenever a source
+        file is newer than the current VERSION, as a gentle reminder rather than an
+        unconditional blocker. Teams who need to enforce bumping on every commit can
+        disable <em>Skip This Time</em> via the policy file above.
       </div>
     </div>
 

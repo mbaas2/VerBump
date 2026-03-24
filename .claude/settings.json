@@ -28,7 +28,8 @@
       "Read(//c/Users/mb/AppData/Roaming/VerBump//**)",
       "Bash(start \"\" \"C:\\\\Git\\\\VerBump\\\\src\\\\bin\\\\Release\\\\net8.0-windows\\\\win-x64\\\\publish\\\\VerBump.exe\" \"C:\\\\Git\\\\VerBump\")",
       "Bash(start \"\" \"C:\\\\Git\\\\VerBump\\\\src\\\\bin\\\\Release\\\\net8.0-windows\\\\win-x64\\\\publish\\\\VerBump.exe\" \"C:\\\\Git\\\\VerBump\\\\src\\\\VERSION\")",
-      "Bash(/c/Git/VerBump/src/bin/Release/net8.0-windows/win-x64/publish/VerBump.exe \"C:/Git/VerBump/src/VERSION\")"
+      "Bash(/c/Git/VerBump/src/bin/Release/net8.0-windows/win-x64/publish/VerBump.exe \"C:/Git/VerBump/src/VERSION\")",
+      "Bash(grep -v \"//\")"
     ],
     "additionalDirectories": [
       "c:\\Git\\VerBump",

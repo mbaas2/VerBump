@@ -9,6 +9,7 @@ using System.Linq;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using Microsoft.Win32;
 
 // ── Settings model ────────────────────────────────────────────────────────────
 
@@ -28,15 +29,40 @@ public class Settings {
     [JsonPropertyName("ignoreDirs")]  public List<string>    IgnoreDirs  { get; set; } = [];
     [JsonPropertyName("ignoreFiles")] public List<string>    IgnoreFiles { get; set; } = [];
     [JsonPropertyName("paths")]       public List<ProjectEntry> Paths    { get; set; } = [];
+    [JsonPropertyName("lists")]       public Dictionary<string, string[]> Lists { get; set; } = new();
+}
+
+public class FavoriteEntry {
+    [JsonPropertyName("label")] public string Label { get; set; } = "";
+    [JsonPropertyName("path")]  public string Path  { get; set; } = "";
+}
+
+public class AppConfig {
+    [JsonPropertyName("historyMaxLength")]  public int                  HistoryMaxLength  { get; set; } = 6;
+    [JsonPropertyName("recentSettings")]   public List<string>          RecentSettings   { get; set; } = [];
+    [JsonPropertyName("recentVersions")]   public List<string>          RecentVersions   { get; set; } = [];
+    [JsonPropertyName("favoriteSettings")] public List<FavoriteEntry>   FavoriteSettings { get; set; } = [];
+    [JsonPropertyName("favoriteVersions")] public List<FavoriteEntry>   FavoriteVersions { get; set; } = [];
+}
+
+public class VerBumpPolicy {
+    [JsonPropertyName("allowHookBypass")] public bool AllowHookBypass { get; set; } = true;
 }
 
 // ── Version schemes ───────────────────────────────────────────────────────────
+
+public record TokenHint(string[] Values, bool IsList, string Label, int Start, int Length);
 
 public interface IVersionScheme {
     List<string> GetButtonLabels();
     string Bump(string current, int partIndex);
     string Refresh(string current) => current;
     bool HasDateTokens => false;
+    bool Matches(string version) => true;
+    TokenHint GetTokenAt(string version, int cursorPos) => null;
+    // Map the numeric components of sourceVersion onto this scheme's numeric tokens;
+    // list/date tokens keep their current values / auto-fill as usual.
+    string SyncFrom(string sourceVersion, string currentVersion) => sourceVersion;
 }
 
 // ── Version format tokens ─────────────────────────────────────────────────────
@@ -54,7 +80,7 @@ public record ResetGroupToken(FormatToken[] Inner) : FormatToken;   // [{#a}.{#b
 
 public static class FormatParser {
     static readonly HashSet<string> DateSpecs =
-        new(StringComparer.OrdinalIgnoreCase) { "YYYY", "YYY", "YY", "Y", "MM", "DD" };
+        new(StringComparer.OrdinalIgnoreCase) { "YYYY", "YYY", "YY", "Y", "MM", "DD", "YYYYMMDD", "YYYYMM" };
 
     public static FormatToken[] Parse(string fmt) {
         if (string.IsNullOrWhiteSpace(fmt))
@@ -94,6 +120,9 @@ public static class FormatParser {
     }
 
     static FormatToken[] ParseSimple(string fmt) {
+        // Bare [a|b|c] shorthand — no braces but pipe-separated → treat as InlineListToken
+        if (!fmt.Contains('{') && fmt.Contains('|'))
+            return [new InlineListToken(fmt.Split('|'))];
         var result = new List<FormatToken>();
         int i = 0;
         while (i < fmt.Length) {
@@ -137,10 +166,17 @@ public class FormatScheme : IVersionScheme {
     readonly FormatToken[] _tokens;
     readonly List<TokenCtx> _interactive;
     readonly List<(FormatToken Token, int ActionIdx)> _parsePlan;
+    readonly Dictionary<string, string[]> _lists;
 
     public bool HasDateTokens { get; }
 
-    public FormatScheme(string format) {
+    string[] Resolve(NamedListToken n) =>
+        _lists.TryGetValue(n.ListName, out var v) && v.Length > 0 ? v : new[] { "?" };
+
+    public FormatScheme(string format, Dictionary<string, string[]> lists = null) {
+        _lists       = lists != null
+            ? new Dictionary<string, string[]>(lists, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         _tokens      = FormatParser.Parse(format);
         _interactive = [];
         _parsePlan   = [];
@@ -171,8 +207,9 @@ public class FormatScheme : IVersionScheme {
 
     public List<string> GetButtonLabels() =>
         _interactive.Select(ctx => ctx.Token switch {
-            NumericToken n    => n.Name,
+            NumericToken n     => n.Name,
             InlineListToken il => string.Join("|", il.Values),
+            NamedListToken nl  => string.Join("|", Resolve(nl)),
             _                  => null
         }).ToList();
 
@@ -192,27 +229,79 @@ public class FormatScheme : IVersionScheme {
 
     public string Refresh(string current) => Render(ParseVersion(current));
 
+    public string SyncFrom(string sourceVersion, string currentVersion) {
+        // Extract integer segments from source in order: "3.0.1" → ["3","0","1"]
+        var srcNums = System.Text.RegularExpressions.Regex.Matches(
+            sourceVersion.Trim(), @"\d+").Select(m => m.Value).ToArray();
+        // Start from current parsed values so list-token selections are preserved
+        var values = ParseVersion(currentVersion);
+        // Map source integers onto numeric tokens in declaration order; extras → "0"
+        int si = 0;
+        for (int i = 0; i < _interactive.Count; i++) {
+            if (_interactive[i].Token is NumericToken)
+                values[i] = si < srcNums.Length ? srcNums[si++] : "0";
+        }
+        return Render(values);
+    }
+
+    string BuildPattern() {
+        var pat = new System.Text.StringBuilder("^");
+        foreach (var (tok, ai) in _parsePlan) {
+            switch (tok) {
+                case LiteralToken lt:
+                    pat.Append(System.Text.RegularExpressions.Regex.Escape(lt.Text)); break;
+                case DateToken dt:
+                    int dlen = dt.Spec switch {
+                        "YYYYMMDD" => 8, "YYYYMM" => 6,
+                        "YYYY" => 4, "YYY" => 3, "MM" => 2, "DD" => 2, _ => 2 };
+                    pat.Append($@"\d{{{dlen}}}"); break;
+                case NumericToken:
+                    pat.Append($@"(?<g{ai}>\d+)"); break;
+                case InlineListToken il:
+                    pat.Append($"(?<g{ai}>{string.Join("|", il.Values.Select(System.Text.RegularExpressions.Regex.Escape))})"); break;
+                case NamedListToken nl:
+                    pat.Append($"(?<g{ai}>{string.Join("|", Resolve(nl).Select(System.Text.RegularExpressions.Regex.Escape))})"); break;
+                default:
+                    pat.Append($@"(?<g{ai}>\S*)"); break;
+            }
+        }
+        pat.Append('$');
+        return pat.ToString();
+    }
+
+    public bool Matches(string version) {
+        try { return System.Text.RegularExpressions.Regex.IsMatch(version.Trim(), BuildPattern(),
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase); }
+        catch { return true; }
+    }
+
+    public TokenHint GetTokenAt(string version, int cursorPos) {
+        try {
+            var m = System.Text.RegularExpressions.Regex.Match(version, BuildPattern(),
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!m.Success) return null;
+            for (int i = 0; i < _interactive.Count; i++) {
+                var g = m.Groups[$"g{i}"];
+                if (!g.Success) continue;
+                if (cursorPos < g.Index || cursorPos > g.Index + g.Length) continue;
+                var tok = _interactive[i].Token;
+                return tok switch {
+                    InlineListToken il => new TokenHint(il.Values, true,
+                        string.Join(" | ", il.Values), g.Index, g.Length),
+                    NamedListToken nl  => new TokenHint(Resolve(nl), true,
+                        $"{nl.ListName}: {string.Join(" | ", Resolve(nl))}", g.Index, g.Length),
+                    NumericToken nt    => new TokenHint(null, false, nt.Name, g.Index, g.Length),
+                    _                  => new TokenHint(null, false, "", g.Index, g.Length),
+                };
+            }
+        } catch { }
+        return null;
+    }
+
     string[] ParseVersion(string version) {
         var values = _interactive.Select(ctx => DefaultValue(ctx.Token)).ToArray();
         try {
-            var pat = new System.Text.StringBuilder("^");
-            foreach (var (tok, ai) in _parsePlan) {
-                switch (tok) {
-                    case LiteralToken lt:
-                        pat.Append(System.Text.RegularExpressions.Regex.Escape(lt.Text)); break;
-                    case DateToken dt:
-                        int dlen = dt.Spec switch { "YYYY" => 4, "YYY" => 3, "MM" => 2, "DD" => 2, _ => 2 };
-                        pat.Append($@"\d{{{dlen}}}"); break;
-                    case NumericToken:
-                        pat.Append($@"(?<g{ai}>\d+)"); break;
-                    case InlineListToken il:
-                        pat.Append($"(?<g{ai}>{string.Join("|", il.Values.Select(System.Text.RegularExpressions.Regex.Escape))})"); break;
-                    default:
-                        pat.Append($@"(?<g{ai}>\S*)"); break;
-                }
-            }
-            pat.Append('$');
-            var m = System.Text.RegularExpressions.Regex.Match(version, pat.ToString(),
+            var m = System.Text.RegularExpressions.Regex.Match(version, BuildPattern(),
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             if (m.Success)
                 for (int i = 0; i < _interactive.Count; i++) {
@@ -235,20 +324,30 @@ public class FormatScheme : IVersionScheme {
         return sb.ToString();
     }
 
-    static string BumpValue(FormatToken t, string current) {
+    string BumpValue(FormatToken t, string current) {
         if (t is NumericToken)
             return (int.TryParse(current, out int v) ? v + 1 : 1).ToString();
         if (t is InlineListToken il) {
             int idx = Array.IndexOf(il.Values, current);
             return il.Values[(idx < 0 ? 0 : idx + 1) % il.Values.Length];
         }
+        if (t is NamedListToken nl) {
+            var vals = Resolve(nl);
+            int idx  = Array.IndexOf(vals, current);
+            return vals[(idx < 0 ? 0 : idx + 1) % vals.Length];
+        }
         return current;
     }
 
-    static string DefaultValue(FormatToken t) =>
-        t is InlineListToken il && il.Values.Length > 0 ? il.Values[0] : "0";
+    string DefaultValue(FormatToken t) => t switch {
+        InlineListToken il when il.Values.Length > 0 => il.Values[0],
+        NamedListToken n                             => Resolve(n)[0],
+        _                                            => "0",
+    };
 
     string DateValue(string spec) => spec switch {
+        "YYYYMMDD" => DateTime.Today.ToString("yyyyMMdd"),
+        "YYYYMM"   => DateTime.Today.ToString("yyyyMM"),
         "YYYY" => DateTime.Today.Year.ToString("D4"),
         "YYY"  => (DateTime.Today.Year % 1000).ToString("D3"),
         "YY"   => (DateTime.Today.Year % 100).ToString("D2"),
@@ -262,8 +361,8 @@ public class FormatScheme : IVersionScheme {
 // ── Scheme factory ────────────────────────────────────────────────────────────
 
 public static class SchemeFactory {
-    public static IVersionScheme Create(ProjectEntry entry) =>
-        new FormatScheme(FormatFor(entry));
+    public static IVersionScheme Create(ProjectEntry entry, Dictionary<string, string[]> lists = null) =>
+        new FormatScheme(FormatFor(entry), lists);
 
     public static string FormatFor(ProjectEntry entry) {
         // New-style format string already contains { or [
@@ -310,6 +409,7 @@ public static class Ph {
     public const string CheckCircle = "\ue184";
     public const string FolderOpen  = "\ue248";
     public const string Plus        = "\ue334";
+    public const string ArrowsClockwise = "\ue02c";
 
     public static void Init(System.Reflection.Assembly asm) {
         LoadFont(asm, "VerBump.Phosphor.ttf",     ref _family);
@@ -471,34 +571,69 @@ public static class VerBump {
         public bool        IsUnsaved;   // true = via Kontextmenü geöffnet, noch nicht in settings.json
     }
 
-class DarkColorTable : ProfessionalColorTable {
-        static readonly Color Bg    = Color.FromArgb(45, 45, 48);
-        static readonly Color Hover = Color.FromArgb(70, 70, 80);
-        static readonly Color Sep   = Color.FromArgb(80, 80, 85);
-        public override Color ToolStripGradientBegin          => Bg;
-        public override Color ToolStripGradientMiddle         => Bg;
-        public override Color ToolStripGradientEnd            => Bg;
-        public override Color ButtonSelectedGradientBegin     => Hover;
-        public override Color ButtonSelectedGradientMiddle    => Hover;
-        public override Color ButtonSelectedGradientEnd       => Hover;
-        public override Color ButtonPressedGradientBegin      => Hover;
-        public override Color ButtonPressedGradientMiddle     => Hover;
-        public override Color ButtonPressedGradientEnd        => Hover;
-        public override Color ButtonCheckedGradientBegin      => Hover;
-        public override Color ButtonCheckedGradientMiddle     => Hover;
-        public override Color ButtonCheckedGradientEnd        => Hover;
-        public override Color ButtonSelectedBorder            => Sep;
-        public override Color SeparatorDark                   => Sep;
-        public override Color SeparatorLight                  => Sep;
-        public override Color ImageMarginGradientBegin        => Bg;
-        public override Color ImageMarginGradientMiddle       => Bg;
-        public override Color ImageMarginGradientEnd          => Bg;
+// ── Theme (OS-aware dark/light) ───────────────────────────────────────────────
+
+static class Theme {
+    public static bool IsDark { get; private set; } = true;
+
+    public static void Detect() {
+        try {
+            using var key = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            IsDark = (int)(key?.GetValue("AppsUseLightTheme") ?? 0) == 0;
+        } catch { IsDark = true; }
     }
+
+    public static Color BgMid    => IsDark ? Color.FromArgb(45, 45, 48)    : Color.FromArgb(240, 240, 242);
+    public static Color BgDark   => IsDark ? Color.FromArgb(30, 30, 30)    : Color.FromArgb(225, 225, 228);
+    public static Color BgLight  => IsDark ? Color.FromArgb(60, 60, 60)    : Color.FromArgb(255, 255, 255);
+    public static Color BgBtn    => IsDark ? Color.FromArgb(70, 70, 70)    : Color.FromArgb(225, 225, 228);
+    public static Color Fg       => IsDark ? Color.White                    : Color.Black;
+    public static Color FgDim    => IsDark ? Color.LightGray                : Color.DimGray;
+    public static Color FgMuted  => IsDark ? Color.FromArgb(160, 160, 165) : Color.FromArgb(100, 100, 110);
+    public static Color Sep      => IsDark ? Color.FromArgb(80, 80, 85)    : Color.FromArgb(200, 200, 205);
+    public static Color Hover    => IsDark ? Color.FromArgb(70, 70, 80)    : Color.FromArgb(210, 210, 220);
+    public static Color Selected => IsDark ? Color.FromArgb(60, 60, 70)    : Color.FromArgb(210, 215, 230);
+    public static Color Accent   => Color.FromArgb(0, 122, 204);
+}
+
+class ThemedColorTable : ProfessionalColorTable {
+    public override Color ToolStripGradientBegin              => Theme.BgMid;
+    public override Color ToolStripGradientMiddle             => Theme.BgMid;
+    public override Color ToolStripGradientEnd                => Theme.BgMid;
+    public override Color ButtonSelectedGradientBegin         => Theme.Hover;
+    public override Color ButtonSelectedGradientMiddle        => Theme.Hover;
+    public override Color ButtonSelectedGradientEnd           => Theme.Hover;
+    public override Color ButtonPressedGradientBegin          => Theme.Hover;
+    public override Color ButtonPressedGradientMiddle         => Theme.Hover;
+    public override Color ButtonPressedGradientEnd            => Theme.Hover;
+    public override Color ButtonCheckedGradientBegin          => Theme.Hover;
+    public override Color ButtonCheckedGradientMiddle         => Theme.Hover;
+    public override Color ButtonCheckedGradientEnd            => Theme.Hover;
+    public override Color ButtonSelectedBorder                => Theme.Sep;
+    public override Color SeparatorDark                       => Theme.Sep;
+    public override Color SeparatorLight                      => Theme.Sep;
+    public override Color ImageMarginGradientBegin            => Theme.BgMid;
+    public override Color ImageMarginGradientMiddle           => Theme.BgMid;
+    public override Color ImageMarginGradientEnd              => Theme.BgMid;
+    public override Color MenuStripGradientBegin              => Theme.BgMid;
+    public override Color MenuStripGradientEnd                => Theme.BgMid;
+    public override Color MenuItemBorder                      => Theme.Sep;
+    public override Color MenuItemSelected                    => Theme.Hover;
+    public override Color MenuItemSelectedGradientBegin       => Theme.Hover;
+    public override Color MenuItemSelectedGradientEnd         => Theme.Hover;
+    public override Color MenuItemPressedGradientBegin        => Theme.BgMid;
+    public override Color MenuItemPressedGradientMiddle       => Theme.BgMid;
+    public override Color MenuItemPressedGradientEnd          => Theme.BgMid;
+    public override Color MenuBorder                          => Theme.Sep;
+    public override Color ToolStripDropDownBackground         => Theme.BgMid;
+}
 
     static string       OverrideSettingsPath = null;
     static List<string> InitialVersionPaths  = new();
     static int          SilentBumpPart       = -1;   // 0-based; -1 = no silent bump
     static bool         CheckMode            = false;
+    static bool         ShouldRestart        = false;
 
     [STAThread]
     public static void Main(string[] args) {
@@ -524,7 +659,10 @@ class DarkColorTable : ProfessionalColorTable {
         SetForegroundWindow(System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        Run();
+        do {
+            ShouldRestart = false;
+            Run();
+        } while (ShouldRestart);
     }
 
     public static void Run() {
@@ -535,7 +673,20 @@ class DarkColorTable : ProfessionalColorTable {
         string appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VerBump");
         Directory.CreateDirectory(appDataDir);
         Log.Init(appDataDir);
+        Theme.Detect();
         L.Load(baseDir);
+        var appConfig = LoadAppConfig();
+        var policy    = LoadPolicy();
+
+        // ── Theme colors for this Run() invocation ──
+        Color bgMid    = Theme.BgMid;
+        Color bgDark   = Theme.BgDark;
+        Color bgLight  = Theme.BgLight;
+        Color bgBtn    = Theme.BgBtn;
+        Color fgW      = Theme.Fg;
+        Color fgDim    = Theme.FgDim;
+        Color selBg    = Theme.Selected;
+
         string appVersion = "?";
         try {
             var asm = System.Reflection.Assembly.GetExecutingAssembly();
@@ -569,13 +720,13 @@ class DarkColorTable : ProfessionalColorTable {
                     StartPosition = FormStartPosition.CenterScreen,
                     FormBorderStyle = FormBorderStyle.FixedDialog,
                     MaximizeBox = false, MinimizeBox = false,
-                    BackColor = Color.FromArgb(45, 45, 48), ForeColor = Color.White,
+                    BackColor = bgMid, ForeColor = fgW,
                 };
                 new Label { Parent = md, Left = 16, Top = 16, Width = 480, Height = 52,
                     Text = L.T("settings.created", jsonPath),
-                    Font = new Font("Segoe UI", 9F), ForeColor = Color.White };
+                    Font = new Font("Segoe UI", 9F), ForeColor = fgW };
                 var mdOk = new Button { Parent = md, Text = "OK", Left = 412, Top = 74, Width = 80, Height = 28,
-                    FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = Color.White,
+                    FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW,
                     DialogResult = DialogResult.OK };
                 md.AcceptButton = mdOk;
                 md.ShowDialog();
@@ -583,7 +734,7 @@ class DarkColorTable : ProfessionalColorTable {
             }
             try { settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(jsonPath), new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) ?? new Settings(); }
             catch (Exception ex) { Log.Write("Run/json", ex); MessageBox.Show(L.T("error.json", ex.Message)); return; }
-            if (OverrideSettingsPath != null) AddRecentSetting(OverrideSettingsPath);
+            if (OverrideSettingsPath != null) { AddToHistory(appConfig.RecentSettings, OverrideSettingsPath, appConfig.HistoryMaxLength); SaveAppConfig(appConfig); }
         }
 
         // ── Silent bump from Explorer context menu (--bump=N) ─────────────────
@@ -602,16 +753,23 @@ class DarkColorTable : ProfessionalColorTable {
         List<string>    checkIgnoreFiles = null;
         if (CheckMode && singleVersionPath != null) {
             string vf = Path.GetFullPath(singleVersionPath);
-            var ce = settings.Paths?.FirstOrDefault(p => {
+            var matchingEntry = settings.Paths?.FirstOrDefault(p => {
                 try { return string.Equals(Path.GetFullPath(Path.Combine(p.Path.Trim('"'), "VERSION")), vf, StringComparison.OrdinalIgnoreCase); }
                 catch { return false; }
-            }) ?? new ProjectEntry();
+            });
+            var ce = matchingEntry ?? new ProjectEntry { Path = Path.GetDirectoryName(vf) ?? "", Scheme = "semver" };
             checkIgnoreDirs  = BuildEffectiveIgnoreDirs(settings, ce);
             checkIgnoreFiles = BuildEffectiveIgnoreFiles(settings, ce);
             if (GetNewerFiles(vf, 1, checkIgnoreDirs, checkIgnoreFiles).Count == 0) {
                 Environment.Exit(0); return;
             }
-            // VERSION is stale → fall through and show the main UI
+            // Show only the stale project, not all projects from settings.json
+            settings = new Settings {
+                Paths       = [matchingEntry ?? ce],
+                IgnoreDirs  = settings.IgnoreDirs,
+                IgnoreFiles = settings.IgnoreFiles,
+                Lists       = settings.Lists
+            };
         }
 
         bool willHaveUnsavedEntry = unsavedMode;
@@ -624,12 +782,14 @@ class DarkColorTable : ProfessionalColorTable {
         } else if (OverrideSettingsPath != null) {
             formTitle = $"VerBump  v{appVersion}  —  {Path.GetFileName(OverrideSettingsPath)}";
         }
+        if (CheckMode && singleVersionPath != null)
+            formTitle = $"VerBump — Git Hook — {Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(singleVersionPath))) ?? "?"}";
         using var form = new Form {
             Text = formTitle,
             Width = 720, Height = 80 + (willHaveUnsavedEntry ? InitialVersionPaths.Count : settings.Paths.Count) * 55 + 138,
             StartPosition = FormStartPosition.CenterScreen,
             KeyPreview = true,
-            BackColor = Color.FromArgb(45, 45, 48), ForeColor = Color.White
+            BackColor = bgMid, ForeColor = fgW
         };
 
         try {
@@ -638,8 +798,20 @@ class DarkColorTable : ProfessionalColorTable {
                 Icon.ExtractAssociatedIcon(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName);
         } catch { form.Icon = SystemIcons.Application; }
 
-        var btnOk  = new Button { Text = L.T("btn.save"),   Left = 470, Top = 15, Width = 110, Height = 35, DialogResult = DialogResult.OK,     FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
-        var btnCan = new Button { Text = L.T("btn.cancel"), Left = 590, Top = 15, Width = 110, Height = 35, DialogResult = DialogResult.Cancel, FlatStyle = FlatStyle.Flat };
+        bool hookBypassAllowed = CheckMode && policy.AllowHookBypass;
+        var btnOk  = new Button {
+            Text = CheckMode ? L.T("btn.commit") : L.T("btn.save"),
+            Left = 590, Top = 15, Width = 120, Height = 35,
+            DialogResult = DialogResult.OK,
+            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204),
+            ForeColor = Color.White, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
+        var btnCan = new Button {
+            Text = CheckMode ? L.T("btn.block_commit") : L.T("btn.cancel"),
+            Left = hookBypassAllowed ? 340 : 460, Top = 15, Width = 120, Height = 35,
+            DialogResult = DialogResult.Cancel,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = CheckMode ? Color.FromArgb(160, 40, 40) : bgBtn,
+            ForeColor = CheckMode ? Color.White : fgW };
 
         form.AcceptButton = btnOk;
         form.CancelButton = btnCan;
@@ -650,29 +822,216 @@ class DarkColorTable : ProfessionalColorTable {
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
             Font = new Font("Segoe UI", 8.5F),
-            ForeColor = Color.LightGray,
+            ForeColor = fgDim,
             Padding = new Padding(8, 0, 0, 0),
         };
         var statusPanel = new Panel {
             Dock = DockStyle.Bottom, Height = 24,
-            BackColor = Color.FromArgb(30, 30, 30),
+            BackColor = bgDark,
         };
         statusPanel.Controls.Add(statusLabel);
 
         var statusTimer = new System.Windows.Forms.Timer { Interval = 3000 };
 
         Action<string, bool> setStatus = (msg, isError) => {
-            statusLabel.ForeColor = isError ? Color.Salmon : Color.LightGray;
+            statusLabel.ForeColor = isError ? Color.Salmon : fgDim;
             statusLabel.Text = msg;
             if (isError) { statusTimer.Stop(); statusTimer.Start(); }
         };
 
-        var mainPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(10), BackColor = Color.FromArgb(30, 30, 30), FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        var mainPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(10), BackColor = bgDark, FlowDirection = FlowDirection.TopDown, WrapContents = false };
         var uiEntries = new List<ProjectUI>();
         int selectedIndex = 0;
         Action updateSelection = null;
+        var undoStack = new Stack<(int entryIdx, string oldVersion, string label)>();
+        Action updateUndoItem = () => { };
 
         Ph.Init(System.Reflection.Assembly.GetExecutingAssembly());
+
+        // ── Version-box hints (cursor position → status + context menu) ───────
+        void AttachVersionHints(TextBox vtb, IVersionScheme sch) {
+            void updateHint() {
+                var hint = sch.GetTokenAt(vtb.Text, vtb.SelectionStart);
+                if (hint == null) {
+                    if (!sch.Matches(vtb.Text.Trim()))
+                        setStatus("⚠ Wert passt nicht zum Format", true);
+                    return;
+                }
+                string msg = hint.IsList
+                    ? $"Liste: {hint.Label}  ·  Alt+↓ für Auswahl"
+                    : $"Zahl: {hint.Label}  ·  direkt tippen";
+                setStatus(msg, false);
+            }
+
+            var cms = new ContextMenuStrip { Renderer = new ToolStripProfessionalRenderer(new ThemedColorTable()) };
+            cms.Opening += (s, e) => {
+                cms.Items.Clear();
+                var hint = sch.GetTokenAt(vtb.Text, vtb.SelectionStart);
+                if (hint?.Values == null || !hint.IsList) { e.Cancel = true; return; }
+                cms.Items.Add(new ToolStripMenuItem($"— {hint.Label} —") { Enabled = false, ForeColor = fgDim });
+                cms.Items.Add(new ToolStripSeparator());
+                foreach (var val in hint.Values) {
+                    string v = val;
+                    var item = new ToolStripMenuItem(v) { ForeColor = fgW };
+                    item.Click += (si, ei) => {
+                        var h = sch.GetTokenAt(vtb.Text, vtb.SelectionStart);
+                        if (h == null) return;
+                        vtb.Text = vtb.Text[..h.Start] + v + vtb.Text[(h.Start + h.Length)..];
+                        vtb.SelectionStart = h.Start + v.Length;
+                    };
+                    cms.Items.Add(item);
+                }
+            };
+            // right-click keeps the default cut/copy/paste menu; list picker via Alt+Down
+            vtb.MouseUp += (s, e) => { if (e.Button == MouseButtons.Left) updateHint(); };
+            vtb.KeyUp   += (s, e) => updateHint();
+            vtb.KeyDown += (s, e) => {
+                if (e.Alt && e.KeyCode == Keys.Down) {
+                    cms.Show(vtb, new Point(0, vtb.Height));
+                    e.Handled = true; e.SuppressKeyPress = true;
+                }
+            };
+        }
+
+        // ── Row context menu ──────────────────────────────────────────────────
+        int ctxTargetIndex = -1;
+        var rowCtx           = new ContextMenuStrip { Renderer = new ToolStripProfessionalRenderer(new ThemedColorTable()) };
+        var ctxEdit          = new ToolStripMenuItem(L.T("menu.edit_settings"))  { ForeColor = fgW };
+        var ctxExplore       = new ToolStripMenuItem("Ordner im Explorer öffnen") { ForeColor = fgW };
+        var ctxAddVersionFav = new ToolStripMenuItem(L.T("menu.add_version_fav")) { ForeColor = Color.FromArgb(255, 200, 60) };
+        var ctxAddToSettings = new ToolStripMenuItem(L.T("toolbar.add_project")) { ForeColor = fgW };
+        rowCtx.Items.Add(ctxEdit);
+        rowCtx.Items.Add(ctxExplore);
+        rowCtx.Items.Add(ctxAddVersionFav);
+        rowCtx.Items.Add(new ToolStripSeparator());
+        rowCtx.Items.Add(ctxAddToSettings);
+        rowCtx.BackColor           = bgMid;
+        ctxEdit.BackColor          = bgMid;
+        ctxExplore.BackColor       = bgMid;
+        ctxAddVersionFav.BackColor = bgMid;
+        ctxAddToSettings.BackColor = bgMid;
+
+        rowCtx.Opening += (s, e) => {
+            bool ok = ctxTargetIndex >= 0 && ctxTargetIndex < uiEntries.Count;
+            ctxEdit.Visible          = ok && !uiEntries[ctxTargetIndex].IsUnsaved;
+            ctxExplore.Visible       = ok;
+            ctxAddToSettings.Visible = ok && uiEntries[ctxTargetIndex].IsUnsaved;
+            if (ok) {
+                string fp = uiEntries[ctxTargetIndex].FilePath;
+                bool alreadyFav = fp != null && appConfig.FavoriteVersions.Any(
+                    f => string.Equals(f.Path, fp, StringComparison.OrdinalIgnoreCase));
+                ctxAddVersionFav.Visible = fp != null;
+                ctxAddVersionFav.Enabled = !alreadyFav;
+                ctxAddVersionFav.Text    = alreadyFav
+                    ? L.T("menu.remove_version_fav")
+                    : L.T("menu.add_version_fav");
+            } else {
+                ctxAddVersionFav.Visible = false;
+            }
+        };
+        ctxEdit.Click += (s, e) => {
+            if (ctxTargetIndex < 0 || ctxTargetIndex >= uiEntries.Count) return;
+            var ui = uiEntries[ctxTargetIndex];
+            if (ui.IsUnsaved || jsonPath == null) return;
+            int idx = settings.Paths.IndexOf(ui.Entry);
+            ShowSettingsDialog(form, settings, jsonPath, Math.Max(0, idx));
+        };
+        ctxExplore.Click += (s, e) => {
+            if (ctxTargetIndex < 0 || ctxTargetIndex >= uiEntries.Count) return;
+            string folder = Path.GetDirectoryName(uiEntries[ctxTargetIndex].FilePath);
+            if (folder != null && Directory.Exists(folder))
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", folder) { UseShellExecute = true });
+        };
+        ctxAddToSettings.Click += (s, e) => {
+            if (ctxTargetIndex < 0 || ctxTargetIndex >= uiEntries.Count) return;
+            var ui = uiEntries[ctxTargetIndex];
+            if (!ui.IsUnsaved) return;
+
+            // ── Ziel-Auswahl-Dialog ───────────────────────────────────────────
+            string pickedJson   = null;
+            bool   switchToFile = false;
+
+            int dlgH = jsonPath != null ? 152 : 112;
+            using var addDlg = new Form {
+                Text = L.T("toolbar.add_project"), Width = 420, Height = dlgH,
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false, MinimizeBox = false, KeyPreview = true,
+                BackColor = bgMid, ForeColor = fgW,
+            };
+            new Label { Parent = addDlg, Left = 12, Top = 10, Width = 390, Height = 20,
+                Text = "Eintrag aufnehmen in:", Font = new Font("Segoe UI", 9F), ForeColor = fgW };
+
+            if (jsonPath != null) {
+                string shortPath = Path.GetFileName(Path.GetDirectoryName(jsonPath))
+                                   + "/" + Path.GetFileName(jsonPath);
+                var btnActive = new Button {
+                    Parent = addDlg, Left = 12, Top = 34, Width = 388, Height = 28,
+                    Text = $"Aktive Settings: {shortPath}",
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW,
+                    Font = new Font("Segoe UI", 9F),
+                };
+                btnActive.Click += (bs, be) => { pickedJson = jsonPath; switchToFile = false; addDlg.Close(); };
+                addDlg.AcceptButton = btnActive;
+            }
+
+            int row2 = jsonPath != null ? 68 : 34;
+            var btnOther = new Button {
+                Parent = addDlg, Left = 12, Top = row2, Width = 194, Height = 28,
+                Text = "Andere / neue Datei\u2026",
+                FlatStyle = FlatStyle.Flat,
+                BackColor = bgBtn, ForeColor = fgW,
+                Font = new Font("Segoe UI", 9F),
+            };
+            btnOther.Click += (bs, be) => {
+                string initDir = jsonPath != null ? Path.GetDirectoryName(jsonPath)
+                               : InitialVersionPaths.Count > 0 ? Path.GetDirectoryName(InitialVersionPaths[0])
+                               : appDataDir;
+                using var sfd = new SaveFileDialog {
+                    Title = "settings.json wählen oder neu erstellen",
+                    Filter = "JSON|*.json", FileName = "settings.json",
+                    InitialDirectory = initDir,
+                };
+                if (sfd.ShowDialog(addDlg) == DialogResult.OK) { pickedJson = sfd.FileName; switchToFile = true; }
+                addDlg.Close();
+            };
+            if (jsonPath == null) addDlg.AcceptButton = btnOther;
+
+            var btnAbort = new Button {
+                Parent = addDlg, Left = 212, Top = row2, Width = 188, Height = 28,
+                Text = L.T("btn.cancel"),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = bgBtn, ForeColor = fgW,
+                Font = new Font("Segoe UI", 9F), DialogResult = DialogResult.Cancel,
+            };
+            addDlg.CancelButton = btnAbort;
+            addDlg.KeyDown += (ks, ke) => { if (ke.KeyCode == Keys.Escape) addDlg.Close(); };
+            addDlg.ShowDialog(form);
+
+            if (pickedJson == null) return;
+
+            // ── In Zieldatei speichern ────────────────────────────────────────
+            Settings targetSettings = new();
+            if (File.Exists(pickedJson)) {
+                try { targetSettings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(pickedJson),
+                    new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) ?? new(); }
+                catch { targetSettings = new(); }
+            }
+            targetSettings.Paths.Add(ui.Entry);
+            try {
+                File.WriteAllText(pickedJson, JsonSerializer.Serialize(targetSettings,
+                    new JsonSerializerOptions { WriteIndented = true }));
+            } catch (Exception ex) { setStatus(L.T("error.save", ex.Message), true); return; }
+
+            if (switchToFile) {
+                LoadSettingsFile(pickedJson);   // Neustart mit neuer Datei
+            } else {
+                ui.IsUnsaved = false;
+                ui.StatusStrip.BackColor = Color.FromArgb(80, 80, 80);
+                setStatus(L.T("toolbar.add_project_ok"), false);
+            }
+        };
 
         foreach (var entry in willHaveUnsavedEntry ? [] : settings.Paths) {
             string cleanPath = entry.Path.Trim().TrimEnd(Path.DirectorySeparatorChar, '/');
@@ -683,7 +1042,7 @@ class DarkColorTable : ProfessionalColorTable {
             string projectName = !string.IsNullOrWhiteSpace(entry.Name)
                 ? entry.Name
                 : Path.GetFileName(cleanPath) ?? L.T("project.unnamed");
-            IVersionScheme scheme = SchemeFactory.Create(entry);
+            IVersionScheme scheme = SchemeFactory.Create(entry, settings.Lists);
 
             if (scheme.HasDateTokens)
                 currentV = scheme.Refresh(currentV);
@@ -721,7 +1080,7 @@ class DarkColorTable : ProfessionalColorTable {
                 Text = hotkeyChar,
                 Width = 18, Height = 44,
                 Font = new Font("Segoe UI", 8F),
-                ForeColor = Color.FromArgb(130, 130, 140),
+                ForeColor = Theme.FgMuted,
                 TextAlign = ContentAlignment.MiddleCenter,
             };
             var lbl = new Label { Text = projectName, Width = 172, Height = 44, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
@@ -730,7 +1089,7 @@ class DarkColorTable : ProfessionalColorTable {
                 Text = currentV,
                 Width = 110, Height = 23,
                 Margin = new Padding(0, 10, 0, 0),
-                BackColor = Color.FromArgb(60, 60, 60), ForeColor = Color.White,
+                BackColor = bgLight, ForeColor = fgW,
                 BorderStyle = BorderStyle.FixedSingle,
                 Font = new Font("Consolas", 10F),
             };
@@ -741,6 +1100,11 @@ class DarkColorTable : ProfessionalColorTable {
                 if (e.KeyCode == Keys.Return) { e.Handled = true; e.SuppressKeyPress = true; btnOk.PerformClick(); }
                 if (e.KeyCode == Keys.Escape) { e.Handled = true; e.SuppressKeyPress = true; btnCan.PerformClick(); }
             };
+            tb.TextChanged += (s, e) => {
+                if (tb.BackColor == Color.DarkGreen) return;
+                tb.BackColor = scheme.Matches(tb.Text.Trim()) ? bgLight : Color.FromArgb(110, 50, 0);
+            };
+            AttachVersionHints(tb, scheme);
 
             var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5, 5, 0, 0) };
             var labels = scheme.GetButtonLabels();
@@ -749,17 +1113,22 @@ class DarkColorTable : ProfessionalColorTable {
                 int partIndex = i;
                 var tbCaptured = tb;
                 var schemeCaptured = scheme;
+                var btnFont = new Font("Segoe UI", 8F);
+                int btnW = Math.Max(50, TextRenderer.MeasureText(labels[i] + "+", btnFont).Width + 16);
                 var btn = new Button {
                     Text = labels[i] + "+",
-                    Width = 70, Height = 28,
+                    Width = btnW, Height = 28,
                     FlatStyle = FlatStyle.Flat,
-                    BackColor = Color.FromArgb(70, 70, 70),
-                    Font = new Font("Segoe UI", 8F)
+                    BackColor = bgBtn,
+                    Font = btnFont
                 };
                 btn.Click += (s, e) => {
                     selectedIndex = entryIndex;
                     updateSelection();
-                    tbCaptured.Text = schemeCaptured.Bump(tbCaptured.Text.Trim(), partIndex);
+                    string before = tbCaptured.Text.Trim();
+                    undoStack.Push((entryIndex, before, labels[partIndex] + "+"));
+                    updateUndoItem();
+                    tbCaptured.Text = schemeCaptured.Bump(before, partIndex);
                     tbCaptured.BackColor = Color.DarkGreen;
                 };
                 buttonPanel.Controls.Add(btn);
@@ -778,10 +1147,27 @@ class DarkColorTable : ProfessionalColorTable {
             table.Controls.Add(lbl,       2, 0);
             table.Controls.Add(tb,        3, 0);
             table.Controls.Add(buttonPanel, 4, 0);
-            var strip = new Panel { Width = 5, Dock = DockStyle.Left, BackColor = Color.FromArgb(80, 80, 80), Cursor = Cursors.Help };
+            var strip = new Panel { Width = 5, Dock = DockStyle.Left, BackColor = Theme.Sep, Cursor = Cursors.Help };
             selectionPanel.Controls.Add(strip);
             selectionPanel.Controls.Add(table);
             mainPanel.Controls.Add(selectionPanel);
+            int rowIdx = uiEntries.Count;
+            void AttachRowEvents(Control c) {
+                c.MouseDoubleClick += (s, e) => {
+                    if (rowIdx >= uiEntries.Count || uiEntries[rowIdx].IsUnsaved || jsonPath == null) return;
+                    int idx = settings.Paths.IndexOf(uiEntries[rowIdx].Entry);
+                    ShowSettingsDialog(form, settings, jsonPath, Math.Max(0, idx));
+                };
+                c.MouseDown += (s, e) => {
+                    if (e.Button != MouseButtons.Right) return;
+                    ctxTargetIndex = rowIdx; selectedIndex = rowIdx; updateSelection();
+                    rowCtx.Show((Control)s, e.Location);
+                };
+            }
+            AttachRowEvents(selectionPanel); AttachRowEvents(table);
+            AttachRowEvents(lbl); AttachRowEvents(lblHotkey); AttachRowEvents(iconBox); AttachRowEvents(strip);
+            AttachRowEvents(buttonPanel);
+            foreach (Control c in buttonPanel.Controls) AttachRowEvents(c);
             uiEntries.Add(new ProjectUI { SelectionPanel = selectionPanel, StatusStrip = strip, VersionBox = tb, FilePath = vFile, OriginalVersion = currentV, Scheme = scheme, Backup = entry.Backup, Entry = entry });
         }
 
@@ -793,7 +1179,7 @@ class DarkColorTable : ProfessionalColorTable {
             string currentV    = File.ReadAllText(target).Trim();
             string projectName = Path.GetFileName(cleanPath) ?? target;
             var entry  = new ProjectEntry { Path = cleanPath, Scheme = "semver", ResetOnBump = true };
-            IVersionScheme scheme = SchemeFactory.Create(entry);
+            IVersionScheme scheme = SchemeFactory.Create(entry, settings.Lists);
 
             var selectionPanel = new Panel { Width = 680, Height = 50, Margin = new Padding(0, 3, 0, 3), BackColor = Color.Transparent };
             var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 1, Padding = new Padding(3) };
@@ -807,12 +1193,12 @@ class DarkColorTable : ProfessionalColorTable {
                               : hotkeyIndex < 36 ? ((char)('0' + hotkeyIndex - 26)).ToString()
                               : "";
             var lblHotkey = new Label { Text = hotkeyChar, Width = 18, Height = 44,
-                Font = new Font("Segoe UI", 8F), ForeColor = Color.FromArgb(130, 130, 140),
+                Font = new Font("Segoe UI", 8F), ForeColor = Theme.FgMuted,
                 TextAlign = ContentAlignment.MiddleCenter };
             var lbl = new Label { Text = projectName, Width = 172, Height = 44,
                 Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
             var tb = new TextBox { Text = currentV, Width = 110, Height = 23, Margin = new Padding(0, 10, 0, 0),
-                BackColor = Color.FromArgb(60, 60, 60), ForeColor = Color.White,
+                BackColor = bgLight, ForeColor = fgW,
                 BorderStyle = BorderStyle.FixedSingle, Font = new Font("Consolas", 10F) };
             int entryIndex = uiEntries.Count;
             tb.Enter   += (s, e) => { selectedIndex = entryIndex; updateSelection(); };
@@ -820,14 +1206,29 @@ class DarkColorTable : ProfessionalColorTable {
                 if (e.KeyCode == Keys.Return) { e.Handled = true; e.SuppressKeyPress = true; btnOk.PerformClick(); }
                 if (e.KeyCode == Keys.Escape) { e.Handled = true; e.SuppressKeyPress = true; btnCan.PerformClick(); }
             };
+            tb.TextChanged += (s, e) => {
+                if (tb.BackColor == Color.DarkGreen) return;
+                tb.BackColor = scheme.Matches(tb.Text.Trim()) ? bgLight : Color.FromArgb(110, 50, 0);
+            };
+            AttachVersionHints(tb, scheme);
             var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5, 5, 0, 0) };
             var labels = scheme.GetButtonLabels();
             for (int i = 0; i < labels.Count; i++) {
                 if (labels[i] == null) continue;
                 int partIndex = i; var tbC = tb; var schC = scheme;
-                var btn = new Button { Text = labels[i] + "+", Width = 70, Height = 28,
-                    FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(70, 70, 70), Font = new Font("Segoe UI", 8F) };
-                btn.Click += (s, e) => { selectedIndex = entryIndex; updateSelection(); tbC.Text = schC.Bump(tbC.Text.Trim(), partIndex); tbC.BackColor = Color.DarkGreen; };
+                var btnFont2 = new Font("Segoe UI", 8F);
+                int btnW2 = Math.Max(50, TextRenderer.MeasureText(labels[i] + "+", btnFont2).Width + 16);
+                var btn = new Button { Text = labels[i] + "+", Width = btnW2, Height = 28,
+                    FlatStyle = FlatStyle.Flat, BackColor = bgBtn, Font = btnFont2 };
+                btn.Click += (s, e) => {
+                    selectedIndex = entryIndex;
+                    updateSelection();
+                    string before = tbC.Text.Trim();
+                    undoStack.Push((entryIndex, before, labels[partIndex] + "+"));
+                    updateUndoItem();
+                    tbC.Text = schC.Bump(before, partIndex);
+                    tbC.BackColor = Color.DarkGreen;
+                };
                 buttonPanel.Controls.Add(btn);
             }
             var iconBox = new PictureBox { Width = 36, Height = 36, Margin = new Padding(0, 7, 0, 0),
@@ -841,6 +1242,19 @@ class DarkColorTable : ProfessionalColorTable {
             selectionPanel.Controls.Add(strip);
             selectionPanel.Controls.Add(table);
             mainPanel.Controls.Add(selectionPanel);
+            int rowIdx2 = uiEntries.Count;
+            void AttachRowEvents2(Control c) {
+                c.MouseDoubleClick += (s, e) => { };   // unsaved: no settings to open
+                c.MouseDown += (s, e) => {
+                    if (e.Button != MouseButtons.Right) return;
+                    ctxTargetIndex = rowIdx2; selectedIndex = rowIdx2; updateSelection();
+                    rowCtx.Show((Control)s, e.Location);
+                };
+            }
+            AttachRowEvents2(selectionPanel); AttachRowEvents2(table);
+            AttachRowEvents2(lbl); AttachRowEvents2(lblHotkey); AttachRowEvents2(iconBox); AttachRowEvents2(strip);
+            AttachRowEvents2(buttonPanel);
+            foreach (Control c in buttonPanel.Controls) AttachRowEvents2(c);
             uiEntries.Add(new ProjectUI { SelectionPanel = selectionPanel, StatusStrip = strip, VersionBox = tb,
                 FilePath = target, OriginalVersion = currentV, Scheme = scheme, Backup = false, Entry = entry, IsUnsaved = true });
             selectedIndex = uiEntries.Count - 1;
@@ -848,154 +1262,297 @@ class DarkColorTable : ProfessionalColorTable {
 
         if (uiEntries.Count == 0) {
             var msgFont = new Font("Segoe UI", 9F);
+            string noFilesMsg = L.T("error.nofiles", jsonPath);
             int pathPx  = TextRenderer.MeasureText(jsonPath, msgFont).Width;
             int formW   = Math.Max(360, Math.Min(720, pathPx + 96));
             using var md = new Form {
                 Text = "VerBump", Width = formW, Height = 170,
                 StartPosition = FormStartPosition.CenterScreen,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
-                MaximizeBox = false, MinimizeBox = false,
-                BackColor = Color.FromArgb(45, 45, 48), ForeColor = Color.White,
+                MaximizeBox = false, MinimizeBox = false, KeyPreview = true,
+                BackColor = bgMid, ForeColor = fgW,
             };
             new PictureBox { Parent = md, Left = 16, Top = 16, Width = 32, Height = 32,
                 Image = SystemIcons.Warning.ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom };
             new Label { Parent = md, Left = 56, Top = 12, Width = formW - 72, Height = 80,
-                Text = L.T("error.nofiles", jsonPath), Font = msgFont, ForeColor = Color.White };
+                Text = noFilesMsg, Font = msgFont, ForeColor = fgW };
             var mdYes = new Button { Parent = md, Text = L.T("btn.yes", "Ja"),
                 Left = formW - 202, Top = 96, Width = 88, Height = 28,
-                FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW,
                 DialogResult = DialogResult.Yes };
             new Button { Parent = md, Text = L.T("btn.no", "Nein"),
                 Left = formW - 108, Top = 96, Width = 88, Height = 28,
-                FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(70, 70, 70), ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW,
                 DialogResult = DialogResult.No };
             md.AcceptButton = mdYes;
+            md.KeyDown += (s, e) => {
+                if (e.Control && e.KeyCode == Keys.C) { Clipboard.SetText(noFilesMsg); e.Handled = true; }
+            };
             if (md.ShowDialog() == DialogResult.Yes) ShowSettingsDialog(form, settings, jsonPath);
             return;
         }
 
         var toolTip = new ToolTip { AutoPopDelay = 20000, InitialDelay = 300, ReshowDelay = 200 };
 
-        var bottomPanel = new Panel { Dock = DockStyle.Bottom, Height = 65 };
+        var bottomPanel = new Panel { Dock = DockStyle.Bottom, Height = 65, BackColor = bgMid };
         bottomPanel.Controls.Add(btnOk);
         bottomPanel.Controls.Add(btnCan);
-        var toolStrip = new ToolStrip {
-            Dock             = DockStyle.Top,
-            BackColor        = Color.FromArgb(45, 45, 48),
-            ForeColor        = Color.White,
-            GripStyle        = ToolStripGripStyle.Hidden,
-            Renderer         = new ToolStripProfessionalRenderer(new DarkColorTable()),
-            Font             = new Font("Segoe UI", 9F),
-            ImageScalingSize = new Size(22, 22),
-        };
-
-        var tsSettings = new ToolStripButton(L.T("toolbar.settings")) {
-            ForeColor = Color.White,
-            Image = Ph.ToBitmap(Ph.Gear, 13F, Color.White),
-            TextImageRelation = TextImageRelation.ImageBeforeText,
-        };
-        var tsLoadSettings = new ToolStripDropDownButton(L.T("toolbar.load_settings")) {
-            ForeColor = Color.White,
-            Image = Ph.ToBitmap(Ph.FolderOpen, 13F, Color.White),
-            TextImageRelation = TextImageRelation.ImageBeforeText,
-            ToolTipText = jsonPath,
-            ShowDropDownArrow = true,
-        };
-        var tsSep  = new ToolStripSeparator();
-        var tsInfo = new ToolStripButton(L.T("toolbar.info")) {
-            ForeColor = Color.White,
-            Image = Ph.ToBitmap(Ph.Info, 13F, Color.White),
-            TextImageRelation = TextImageRelation.ImageBeforeText,
-        };
-        Color colOrange = Color.FromArgb(255, 140, 0);
-        Color colGreen  = Color.FromArgb(0, 170, 80);
-        Color colDim    = Color.FromArgb(80, 80, 85);
-        static Bitmap FilterIcon(string glyph, Color color) => Ph.ToBitmap(glyph, 14F, color, bold: true);
-
-        bool showOrange = true, showGreen = true;
-
-        Action applyFilter = null;
-
-        var tsFilterOrange = new ToolStripButton {
-            Image       = FilterIcon(Ph.Warning,     colOrange),
-            ToolTipText = "Zeilen mit neueren Dateien anzeigen/verbergen",
-            Checked     = true,
-        };
-        var tsFilterGreen = new ToolStripButton {
-            Image       = FilterIcon(Ph.CheckCircle, colGreen),
-            ToolTipText = "Aktuelle Zeilen anzeigen/verbergen",
-            Checked     = true,
-        };
-
-        var tsAddProject = new ToolStripButton(L.T("toolbar.add_project")) {
-            ForeColor = Color.White,
-            Image = Ph.ToBitmap(Ph.Plus, 13F, Color.FromArgb(80, 200, 120)),
-            TextImageRelation = TextImageRelation.ImageBeforeText,
-            ToolTipText = L.T("toolbar.add_project_tip"),
-            Visible = willHaveUnsavedEntry,
-        };
-
-        toolStrip.Items.Add(tsSettings);
-        toolStrip.Items.Add(tsLoadSettings);
-        toolStrip.Items.Add(tsSep);
-        toolStrip.Items.Add(tsInfo);
-        toolStrip.Items.Add(new ToolStripSeparator());
-        toolStrip.Items.Add(tsFilterOrange);
-        toolStrip.Items.Add(tsFilterGreen);
-        if (willHaveUnsavedEntry) {
-            toolStrip.Items.Add(new ToolStripSeparator());
-            toolStrip.Items.Add(tsAddProject);
+        if (hookBypassAllowed) {
+            var btnBypass = new Button {
+                Text = L.T("btn.bypass_hook"),
+                Left = 470, Top = 15, Width = 130, Height = 35,
+                FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(160, 100, 0), ForeColor = Color.White,
+                Font = new Font("Segoe UI", 9.5F),
+            };
+            btnBypass.Click += (s, e) => Environment.Exit(0);
+            bottomPanel.Controls.Add(btnBypass);
         }
+        bool showOrange = true, showGreen = true;
+        Action applyFilter = null;
+        ToolStripMenuItem menuSync = null;
 
-        tsSettings.Click += (s, e) => ShowSettingsDialog(form, settings, jsonPath);
+        // ── MenuStrip ──────────────────────────────────────────────────────────
+        var menuStrip  = new MenuStrip {
+            Dock      = DockStyle.Top,
+            BackColor = bgMid,
+            ForeColor = fgW,
+            Renderer  = new ToolStripProfessionalRenderer(new ThemedColorTable()),
+            Font      = new Font("Segoe UI", 9F),
+        };
+        Color darkBg = bgMid;
+
+        // ── Datei ──
+        var menuFile     = new ToolStripMenuItem(L.T("menu.file"))           { ForeColor = fgW };
+        var menuEditSett = new ToolStripMenuItem(L.T("menu.edit_settings"))  { ForeColor = fgW, BackColor = darkBg };
+        var menuLoadSett = new ToolStripMenuItem(L.T("menu.load_settings"))  { ForeColor = fgW, BackColor = darkBg };
+        var menuLoadVer  = new ToolStripMenuItem(L.T("menu.load_version"))   { ForeColor = fgW, BackColor = darkBg };
+        var menuExit     = new ToolStripMenuItem(L.T("menu.exit"))           { ForeColor = fgW, BackColor = darkBg };
+        menuFile.DropDownItems.AddRange(new ToolStripItem[] {
+            menuLoadSett, menuLoadVer, new ToolStripSeparator(), menuExit });
+
+        // ── Bearbeiten ──
+        var menuEdit   = new ToolStripMenuItem(L.T("menu.edit"))             { ForeColor = fgW };
+        var menuUndo   = new ToolStripMenuItem(L.T("menu.undo"))             { ForeColor = fgW, BackColor = darkBg,
+                             ShortcutKeys = Keys.Control | Keys.Z, Enabled = false };
+        menuSync       = new ToolStripMenuItem(L.T("toolbar.sync_versions")) { ForeColor = fgW, BackColor = darkBg,
+                             Enabled = uiEntries.Count(u => u.SelectionPanel.Visible) > 1 };
+        menuEdit.DropDownItems.AddRange(new ToolStripItem[] { menuUndo, new ToolStripSeparator(), menuSync, new ToolStripSeparator(), menuEditSett });
+
+        // ── Ansicht ──
+        var menuView       = new ToolStripMenuItem(L.T("menu.view"))         { ForeColor = fgW };
+        var menuShowOrange = new ToolStripMenuItem(L.T("menu.show_stale"))   { ForeColor = fgW, BackColor = darkBg,
+                                 Checked = true, CheckOnClick = true };
+        var menuShowGreen  = new ToolStripMenuItem(L.T("menu.show_current")) { ForeColor = fgW, BackColor = darkBg,
+                                 Checked = true, CheckOnClick = true };
+        menuView.DropDownItems.AddRange(new ToolStripItem[] { menuShowOrange, menuShowGreen });
+
+        // ── ? ──
+        var menuHelp    = new ToolStripMenuItem("?") { ForeColor = fgW };
+        var menuWebsite = new ToolStripMenuItem("🌐  mbaas2.github.io/VerBump") { ForeColor = fgW, BackColor = darkBg };
+        var menuSponsor = new ToolStripMenuItem(L.T("info.sponsor"))            { ForeColor = Color.FromArgb(255, 120, 150), BackColor = darkBg };
+        var menuReport  = new ToolStripMenuItem(L.T("info.report"))             { ForeColor = Color.FromArgb(255, 190, 80),  BackColor = darkBg };
+        var menuSource  = new ToolStripMenuItem(L.T("info.source"))             { ForeColor = Color.FromArgb(130, 180, 255), BackColor = darkBg };
+        var menuAbout   = new ToolStripMenuItem(L.T("menu.about"))              { ForeColor = fgW, BackColor = darkBg };
+        menuWebsite.Click += (s, e) => OpenUrl("https://mbaas2.github.io/VerBump/");
+        menuSponsor.Click += (s, e) => OpenUrl("https://github.com/sponsors/mbaas2");
+        menuReport.Click  += (s, e) => OpenUrl("https://github.com/mbaas2/VerBump/issues");
+        menuSource.Click  += (s, e) => OpenUrl("https://github.com/mbaas2/VerBump");
+        menuHelp.DropDownItems.AddRange(new ToolStripItem[] {
+            menuWebsite, menuSponsor, menuReport, menuSource,
+            new ToolStripSeparator(), menuAbout });
+
+        menuStrip.Items.AddRange(new ToolStripItem[] { menuFile, menuEdit, menuView, menuHelp });
+
+        // ── updateUndoItem (forward-declared — must be assigned before first bump) ──
+        updateUndoItem = () => {
+            bool hasUndo = undoStack.Count > 0;
+            menuUndo.Enabled = hasUndo;
+            menuUndo.Text = hasUndo
+                ? L.T("menu.undo") + ": " + undoStack.Peek().label
+                : L.T("menu.undo");
+        };
+
+        // ── Datei handlers ──
+        menuEditSett.Click += (s, e) => ShowSettingsDialog(form, settings, jsonPath);
 
         void LoadSettingsFile(string path) {
             OverrideSettingsPath = path;
-            AddRecentSetting(path);
+            AddToHistory(appConfig.RecentSettings, path, appConfig.HistoryMaxLength);
+            SaveAppConfig(appConfig);
+            ShouldRestart = true;
             form.Close();
-            Run();
         }
 
-        void RebuildRecentMenu() {
-            tsLoadSettings.DropDownItems.Clear();
-            var colFg  = Color.White;
-            var colDim = Color.FromArgb(160, 160, 165);
+        void LoadVersionFile(string path) {
+            InitialVersionPaths.Clear();
+            InitialVersionPaths.Add(path);
+            OverrideSettingsPath = null;
+            AddToHistory(appConfig.RecentVersions, path, appConfig.HistoryMaxLength);
+            SaveAppConfig(appConfig);
+            ShouldRestart = true;
+            form.Close();
+        }
 
-            var browse = new ToolStripMenuItem(L.T("toolbar.load_browse")) { ForeColor = colFg };
+        void RebuildSettingsMenu() {
+            menuLoadSett.DropDownItems.Clear();
+            var colFg  = fgW;
+            var colDim = Theme.FgMuted;
+            var browse = new ToolStripMenuItem(L.T("toolbar.load_browse")) { ForeColor = colFg, BackColor = darkBg };
             browse.Click += (s, e) => {
-                using var ofd = new OpenFileDialog { Filter = "JSON|*.json", Title = L.T("toolbar.load_settings"), FileName = "settings.json" };
+                using var ofd = new OpenFileDialog { Filter = "JSON|*.json", Title = L.T("menu.load_settings"), FileName = "settings.json" };
                 if (ofd.ShowDialog(form) == DialogResult.OK) LoadSettingsFile(ofd.FileName);
             };
-            tsLoadSettings.DropDownItems.Add(browse);
-
-            var recent = LoadRecentSettings();
-            if (recent.Count > 0) {
-                tsLoadSettings.DropDownItems.Add(new ToolStripSeparator());
-                foreach (var p in recent) {
-                    string label   = p.Length > 65 ? "…" + p[^62..] : p;
-                    string current = p;
-                    var item = new ToolStripMenuItem(label) { ForeColor = string.Equals(p, jsonPath, StringComparison.OrdinalIgnoreCase) ? colDim : colFg, ToolTipText = p };
-                    item.Click += (s, e) => LoadSettingsFile(current);
-                    tsLoadSettings.DropDownItems.Add(item);
+            menuLoadSett.DropDownItems.Add(browse);
+            if (appConfig.FavoriteSettings.Count > 0) {
+                menuLoadSett.DropDownItems.Add(new ToolStripSeparator());
+                foreach (var fav in appConfig.FavoriteSettings) {
+                    string favPath = fav.Path;
+                    var favItem = new ToolStripMenuItem($"\u2605 {fav.Label}") {
+                        ForeColor = Color.FromArgb(255, 200, 60), BackColor = darkBg, ToolTipText = favPath };
+                    favItem.Click += (s, e) => LoadSettingsFile(favPath);
+                    menuLoadSett.DropDownItems.Add(favItem);
                 }
             }
+            if (appConfig.RecentSettings.Count > 0) {
+                menuLoadSett.DropDownItems.Add(new ToolStripSeparator());
+                foreach (var p in appConfig.RecentSettings) {
+                    string lbl2    = p.Length > 65 ? "\u2026" + p[^62..] : p;
+                    string current = p;
+                    bool isCur = string.Equals(p, jsonPath, StringComparison.OrdinalIgnoreCase);
+                    var item = new ToolStripMenuItem(lbl2) { ForeColor = isCur ? colDim : colFg, BackColor = darkBg, ToolTipText = p };
+                    item.Click += (s, e) => LoadSettingsFile(current);
+                    menuLoadSett.DropDownItems.Add(item);
+                }
+            }
+            menuLoadSett.DropDownItems.Add(new ToolStripSeparator());
+            bool alreadyFav = jsonPath != null && appConfig.FavoriteSettings.Any(f =>
+                string.Equals(f.Path, jsonPath, StringComparison.OrdinalIgnoreCase));
+            var addFav = new ToolStripMenuItem(L.T("menu.add_favorite")) {
+                ForeColor = Color.FromArgb(255, 200, 60), BackColor = darkBg, Enabled = jsonPath != null && !alreadyFav };
+            addFav.Click += (s, e) => {
+                if (jsonPath == null) return;
+                string lbl3 = Path.GetFileName(Path.GetDirectoryName(jsonPath)) ?? jsonPath;
+                appConfig.FavoriteSettings.Add(new FavoriteEntry { Label = lbl3, Path = jsonPath });
+                SaveAppConfig(appConfig);
+            };
+            menuLoadSett.DropDownItems.Add(addFav);
         }
 
-        tsLoadSettings.DropDown.Renderer  = new ToolStripProfessionalRenderer(new DarkColorTable());
-        tsLoadSettings.DropDown.BackColor  = Color.FromArgb(45, 45, 48);
-        tsLoadSettings.DropDownOpening    += (s, e) => RebuildRecentMenu();
-        RebuildRecentMenu();
+        void RebuildVersionMenu() {
+            menuLoadVer.DropDownItems.Clear();
+            var colFg  = fgW;
+            var browse = new ToolStripMenuItem(L.T("toolbar.load_browse")) { ForeColor = colFg, BackColor = darkBg };
+            browse.Click += (s, e) => {
+                using var ofd = new OpenFileDialog { Filter = "VERSION|VERSION|All files|*.*", Title = L.T("menu.load_version"), FileName = "VERSION" };
+                if (ofd.ShowDialog(form) == DialogResult.OK) LoadVersionFile(ofd.FileName);
+            };
+            menuLoadVer.DropDownItems.Add(browse);
+            if (appConfig.FavoriteVersions.Count > 0) {
+                menuLoadVer.DropDownItems.Add(new ToolStripSeparator());
+                foreach (var fav in appConfig.FavoriteVersions) {
+                    string favPath = fav.Path;
+                    var favItem = new ToolStripMenuItem($"\u2605 {fav.Label}") {
+                        ForeColor = Color.FromArgb(255, 200, 60), BackColor = darkBg, ToolTipText = favPath };
+                    favItem.Click += (s, e) => LoadVersionFile(favPath);
+                    menuLoadVer.DropDownItems.Add(favItem);
+                }
+            }
+            if (appConfig.RecentVersions.Count > 0) {
+                menuLoadVer.DropDownItems.Add(new ToolStripSeparator());
+                foreach (var p in appConfig.RecentVersions) {
+                    string lbl2    = p.Length > 65 ? "\u2026" + p[^62..] : p;
+                    string current = p;
+                    var item = new ToolStripMenuItem(lbl2) { ForeColor = colFg, BackColor = darkBg, ToolTipText = p };
+                    item.Click += (s, e) => LoadVersionFile(current);
+                    menuLoadVer.DropDownItems.Add(item);
+                }
+            }
+            menuLoadVer.DropDownItems.Add(new ToolStripSeparator());
+            string vpath = InitialVersionPaths.Count > 0 ? InitialVersionPaths[0] : null;
+            bool alreadyFav = vpath != null && appConfig.FavoriteVersions.Any(f =>
+                string.Equals(f.Path, vpath, StringComparison.OrdinalIgnoreCase));
+            var addFav = new ToolStripMenuItem(L.T("menu.add_favorite")) {
+                ForeColor = Color.FromArgb(255, 200, 60), BackColor = darkBg, Enabled = vpath != null && !alreadyFav };
+            addFav.Click += (s, e) => {
+                if (vpath == null) return;
+                string lbl3 = Path.GetFileName(Path.GetDirectoryName(vpath)) ?? vpath;
+                appConfig.FavoriteVersions.Add(new FavoriteEntry { Label = lbl3, Path = vpath });
+                SaveAppConfig(appConfig);
+            };
+            menuLoadVer.DropDownItems.Add(addFav);
+        }
 
-        tsInfo.Click += (s, e) => ShowAboutDialog(form, appVersion);
+        menuLoadSett.DropDownOpening += (s, e) => RebuildSettingsMenu();
+        menuLoadVer.DropDownOpening  += (s, e) => RebuildVersionMenu();
+        RebuildSettingsMenu();
+        RebuildVersionMenu();
+
+        ctxAddVersionFav.Click += (s, e) => {
+            if (ctxTargetIndex < 0 || ctxTargetIndex >= uiEntries.Count) return;
+            string fp = uiEntries[ctxTargetIndex].FilePath;
+            if (fp == null) return;
+            bool alreadyFav = appConfig.FavoriteVersions.Any(
+                f => string.Equals(f.Path, fp, StringComparison.OrdinalIgnoreCase));
+            if (alreadyFav) {
+                appConfig.FavoriteVersions.RemoveAll(
+                    f => string.Equals(f.Path, fp, StringComparison.OrdinalIgnoreCase));
+            } else {
+                string lbl = uiEntries[ctxTargetIndex].Entry?.Name;
+                if (string.IsNullOrWhiteSpace(lbl))
+                    lbl = Path.GetFileName(Path.GetDirectoryName(fp)) ?? fp;
+                appConfig.FavoriteVersions.Add(new FavoriteEntry { Label = lbl, Path = fp });
+            }
+            SaveAppConfig(appConfig);
+            RebuildVersionMenu();
+        };
+
+        menuExit.Click  += (s, e) => btnCan.PerformClick();
+        menuAbout.Click += (s, e) => ShowAboutDialog(form, appVersion);
+
+        // ── Bearbeiten handlers ──
+        menuUndo.Click += (s, e) => {
+            if (undoStack.Count == 0) return;
+            var (idx, oldVer, _) = undoStack.Pop();
+            if (idx >= 0 && idx < uiEntries.Count) {
+                uiEntries[idx].VersionBox.Text      = oldVer;
+                uiEntries[idx].VersionBox.BackColor = bgLight;
+                selectedIndex = idx;
+                updateSelection();
+            }
+            updateUndoItem();
+        };
+
+        menuSync.Click += (s, e) => {
+            var visible = uiEntries.Where(u => u.SelectionPanel.Visible).ToList();
+            if (visible.Count < 2) return;
+            foreach (var ui in visible)
+                undoStack.Push((uiEntries.IndexOf(ui), ui.VersionBox.Text.Trim(), L.T("toolbar.sync_versions")));
+            updateUndoItem();
+            var maxEntry = visible
+                .OrderByDescending(u => u.VersionBox.Text.Trim(), Comparer<string>.Create(CompareVersionStrings))
+                .First();
+            string maxVer = maxEntry.VersionBox.Text.Trim();
+            foreach (var ui in visible.Where(u => u != maxEntry)) {
+                string synced = ui.Scheme.SyncFrom(maxVer, ui.VersionBox.Text.Trim());
+                if (ui.VersionBox.Text.Trim() == synced) continue;
+                ui.VersionBox.Text      = synced;
+                ui.VersionBox.BackColor = Color.DarkGreen;
+            }
+        };
+
+        // ── Ansicht handlers ──
+        menuShowOrange.Click += (s, e) => { showOrange = menuShowOrange.Checked; applyFilter(); };
+        menuShowGreen.Click  += (s, e) => { showGreen  = menuShowGreen.Checked;  applyFilter(); };
 
         form.Controls.Add(mainPanel);
         form.Controls.Add(bottomPanel);
         form.Controls.Add(statusPanel);
-        form.Controls.Add(toolStrip);
+        form.Controls.Add(menuStrip);
+        form.MainMenuStrip = menuStrip;
 
         updateSelection = () => {
             for (int i = 0; i < uiEntries.Count; i++) {
-                uiEntries[i].SelectionPanel.BackColor = (i == selectedIndex) ? Color.FromArgb(60, 60, 70) : Color.Transparent;
+                uiEntries[i].SelectionPanel.BackColor = (i == selectedIndex) ? selBg : Color.Transparent;
                 if (i == selectedIndex) {
                     uiEntries[i].VersionBox.Focus();
                     var lbls = uiEntries[i].Scheme.GetButtonLabels();
@@ -1005,7 +1562,7 @@ class DarkColorTable : ProfessionalColorTable {
                     setStatus($"{fmtDisplay}   {string.Join("  ", schemeNames)}   {backupStatus}", false);
                 }
             }
-            tsAddProject.Visible = selectedIndex >= 0 && selectedIndex < uiEntries.Count && uiEntries[selectedIndex].IsUnsaved;
+            updateUndoItem();
         };
 
         applyFilter = () => {
@@ -1021,42 +1578,8 @@ class DarkColorTable : ProfessionalColorTable {
                 int first = uiEntries.FindIndex(u => u.SelectionPanel.Visible);
                 if (first >= 0) { selectedIndex = first; updateSelection(); }
             }
-        };
-
-        tsFilterOrange.Click += (s, e) => {
-            showOrange = !showOrange;
-            tsFilterOrange.Image = FilterIcon(Ph.Warning, showOrange ? colOrange : colDim);
-            applyFilter();
-        };
-        tsFilterGreen.Click += (s, e) => {
-            showGreen = !showGreen;
-            tsFilterGreen.Image = FilterIcon(Ph.CheckCircle, showGreen ? colGreen : colDim);
-            applyFilter();
-        };
-
-        tsAddProject.Click += (s, e) => {
-            if (selectedIndex < 0 || selectedIndex >= uiEntries.Count) return;
-            var ui = uiEntries[selectedIndex];
-            if (!ui.IsUnsaved) return;
-            // In unsaved mode jsonPath is null — fall back to default settings file
-            string targetJson = jsonPath ?? Path.Combine(appDataDir, "VerBump-settings.json");
-            Settings targetSettings = settings;
-            if (jsonPath == null && File.Exists(targetJson)) {
-                try { targetSettings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(targetJson),
-                    new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) ?? new(); }
-                catch { targetSettings = new(); }
-            }
-            targetSettings.Paths.Add(ui.Entry);
-            try {
-                File.WriteAllText(targetJson, JsonSerializer.Serialize(targetSettings,
-                    new JsonSerializerOptions { WriteIndented = true }));
-                ui.IsUnsaved = false;
-                ui.StatusStrip.BackColor = Color.FromArgb(80, 80, 80);
-                tsAddProject.Visible = false;
-                setStatus(L.T("toolbar.add_project_ok"), false);
-            } catch (Exception ex) {
-                setStatus(L.T("error.save", ex.Message), true);
-            }
+            int visCount = uiEntries.Count(u => u.SelectionPanel.Visible);
+            menuSync.Enabled = visCount > 1;
         };
 
         statusTimer.Tick += (s, e) => {
@@ -1205,7 +1728,9 @@ class DarkColorTable : ProfessionalColorTable {
         }
     }
 
-    static void ShowSettingsDialog(Form owner, Settings settings, string jsonPath) {
+    static void ShowSettingsDialog(Form owner, Settings settings, string jsonPath, int initialEntryIndex = 0) {
+        var appCfg = LoadAppConfig();
+
         var entries = settings.Paths.Select(e => new ProjectEntry {
             Path = e.Path, Name = e.Name, Icon = e.Icon, Scheme = e.Scheme,
             Format = e.Format, ResetOnBump = e.ResetOnBump, Backup = e.Backup,
@@ -1214,17 +1739,19 @@ class DarkColorTable : ProfessionalColorTable {
         }).ToList();
         var globalIgnoreDirs  = new List<string>(settings.IgnoreDirs  ?? []);
         var globalIgnoreFiles = new List<string>(settings.IgnoreFiles ?? []);
+        var globalLists = new Dictionary<string, string[]>(
+            settings.Lists ?? new Dictionary<string, string[]>(), StringComparer.OrdinalIgnoreCase);
 
-        Color bgDark  = Color.FromArgb(30, 30, 30);
-        Color bgMid   = Color.FromArgb(45, 45, 48);
-        Color bgLight = Color.FromArgb(60, 60, 60);
-        Color bgBtn   = Color.FromArgb(70, 70, 70);
-        Color fgW     = Color.White;
+        Color bgDark  = Theme.BgDark;
+        Color bgMid   = Theme.BgMid;
+        Color bgLight = Theme.BgLight;
+        Color bgBtn   = Theme.BgBtn;
+        Color fgW     = Theme.Fg;
         Font  fUI     = new Font("Segoe UI", 9F);
         Font  fMono   = new Font("Consolas", 9F);
 
         using var dlg = new Form {
-            Text = L.T("settings.title"), Width = 620, Height = 664,
+            Text = L.T("settings.title"), Width = 620, Height = 761,
             StartPosition = FormStartPosition.CenterParent,
             BackColor = bgMid, ForeColor = fgW,
             FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -1234,23 +1761,48 @@ class DarkColorTable : ProfessionalColorTable {
         static string ListToText(List<string> list) => string.Join("\r\n", list ?? []);
         static List<string> TextToList(string text) =>
             (text ?? "").Split('\n').Select(s => s.Trim('\r', ' ')).Where(s => s.Length > 0).ToList();
+        static string DictToListsText(Dictionary<string, string[]> d) =>
+            string.Join("\r\n", (d ?? new Dictionary<string, string[]>())
+                .Select(kv => $"{kv.Key}: {string.Join(", ", kv.Value)}"));
+        static Dictionary<string, string[]> ListsTextToDict(string text) {
+            var d = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+            foreach (var line in (text ?? "").Split('\n').Select(s => s.Trim('\r', ' '))) {
+                int ci = line.IndexOf(':');
+                if (ci <= 0) continue;
+                var name = line[..ci].Trim();
+                var vals = line[(ci + 1)..].Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToArray();
+                if (name.Length > 0 && vals.Length > 0) d[name] = vals;
+            }
+            return d;
+        }
 
         // ── Global ignore ──────────────────────────────────────────────────────
         var grpGlobal = new GroupBox {
-            Parent = dlg, Text = "Global ignore  (one entry per line)", Left = 12, Top = 8, Width = 576, Height = 112,
-            Font = fUI, ForeColor = Color.LightGray,
+            Parent = dlg, Text = "Global", Left = 12, Top = 8, Width = 576, Height = 192,
+            Font = fUI, ForeColor = Theme.FgDim,
         };
-        new Label { Parent = grpGlobal, Text = "Dirs:",  Left = 8, Top = 22, Width = 82, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
-        var tbGlobalIgnoreDirs  = new TextBox { Parent = grpGlobal, Left = 96, Top = 20, Width = 468, Height = 36, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = ListToText(globalIgnoreDirs) };
-        new Label { Parent = grpGlobal, Text = "Files:", Left = 8, Top = 68, Width = 82, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
-        var tbGlobalIgnoreFiles = new TextBox { Parent = grpGlobal, Left = 96, Top = 66, Width = 468, Height = 36, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = ListToText(globalIgnoreFiles) };
+        new Label { Parent = grpGlobal, Text = "Ignore dirs:",  Left = 8, Top = 22, Width = 104, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
+        var tbGlobalIgnoreDirs  = new TextBox { Parent = grpGlobal, Left = 116, Top = 20, Width = 448, Height = 36, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = ListToText(globalIgnoreDirs) };
+        new Label { Parent = grpGlobal, Text = "Ignore files:", Left = 8, Top = 68, Width = 104, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
+        var tbGlobalIgnoreFiles = new TextBox { Parent = grpGlobal, Left = 116, Top = 66, Width = 448, Height = 36, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = ListToText(globalIgnoreFiles) };
+        new Label { Parent = grpGlobal, Text = "Lists:", Left = 8, Top = 116, Width = 104, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
+        var tbGlobalLists = new TextBox { Parent = grpGlobal, Left = 116, Top = 114, Width = 448, Height = 36, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = DictToListsText(settings.Lists) };
+        var tipLists = new ToolTip { AutoPopDelay = 15000, InitialDelay = 300 };
+        tipLists.SetToolTip(tbGlobalLists, "Benannte Listen für Format-Strings. Eine Liste pro Zeile: name: wert1, wert2, wert3\nVerwendung im Format-String als {name}");
+        new Label { Parent = grpGlobal, Text = "History:", Left = 8, Top = 162, Width = 82, Height = 20,
+            TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
+        var nudHistory = new NumericUpDown { Parent = grpGlobal, Left = 96, Top = 160, Width = 60, Height = 23,
+            Minimum = 1, Maximum = 20, Value = appCfg.HistoryMaxLength,
+            BackColor = bgLight, ForeColor = fgW, Font = fMono };
+        new Label { Parent = grpGlobal, Left = 162, Top = 163, Width = 280, Height = 18,
+            Text = "Max. entries in recent-file lists (Settings + VERSION)", Font = fUI, ForeColor = Color.FromArgb(160, 160, 165) };
 
         // ── Project list ──────────────────────────────────────────────────────
-        new Label { Parent = dlg, Text = "Projects", Left = 12, Top = 130, Width = 100, Height = 18,
+        new Label { Parent = dlg, Text = "Projects", Left = 12, Top = 210, Width = 100, Height = 18,
             Font = new Font("Segoe UI", 9F, FontStyle.Bold), ForeColor = fgW };
 
         Button SmallBtn(string t, int x) => new Button {
-            Parent = dlg, Text = t, Left = x, Top = 124, Width = 32, Height = 26,
+            Parent = dlg, Text = t, Left = x, Top = 204, Width = 32, Height = 26,
             FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW,
             Font = new Font("Segoe UI", 10F) };
         var btnAdd    = SmallBtn("+",  452);
@@ -1259,18 +1811,18 @@ class DarkColorTable : ProfessionalColorTable {
         var btnDown   = SmallBtn("↓",  558);
 
         var lstEntries = new ListBox {
-            Parent = dlg, Left = 12, Top = 152, Width = 576, Height = 90,
+            Parent = dlg, Left = 12, Top = 232, Width = 576, Height = 90,
             BackColor = bgDark, ForeColor = fgW, Font = fUI,
             BorderStyle = BorderStyle.FixedSingle,
         };
 
         // ── Detail group ──────────────────────────────────────────────────────
         var grp = new GroupBox {
-            Parent = dlg, Text = "Entry", Left = 12, Top = 250, Width = 576, Height = 318,
-            Font = fUI, ForeColor = Color.LightGray,
+            Parent = dlg, Text = "Entry", Left = 12, Top = 330, Width = 576, Height = 335,
+            Font = fUI, ForeColor = Theme.FgDim,
         };
 
-        Label   GrpLbl(string t, int y) => new Label   { Parent = grp, Text = t, Left = 8, Top = y + 3, Width = 82, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
+        Label   GrpLbl(string t, int y, int w = 82) => new Label   { Parent = grp, Text = t, Left = 8, Top = y + 3, Width = w, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
         TextBox GrpTb (int y, int w)    => new TextBox  { Parent = grp, Left = 96, Top = y, Width = w, Height = 23, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono };
         Button  BrowseBtn(int y)        => new Button   { Parent = grp, Text = "…", Left = 472, Top = y, Width = 90, Height = 24, FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI };
 
@@ -1279,8 +1831,17 @@ class DarkColorTable : ProfessionalColorTable {
         GrpLbl("Name:",    76); var tbName   = GrpTb(76, 460);
         GrpLbl("Icon:",   108); var tbIcon   = GrpTb(108, 368); var btnBrowseIcon = BrowseBtn(108);
         var cbBackup = new CheckBox { Parent = grp, Text = "Backup", Left = 430, Top = 140, Width = 90, Font = fUI, ForeColor = fgW };
-        var tipFmt   = new ToolTip();
-        var lblFormat = GrpLbl("Format:", 138); var tbFormat = GrpTb(138, 320);
+        var tipFmt   = new ToolTip { AutoPopDelay = 20000, InitialDelay = 300 };
+        var lblFormat = GrpLbl("Format:", 138); var tbFormat = GrpTb(138, 280);
+        var btnFormatHelp = new Button {
+            Parent = grp, Text = "?", Left = 382, Top = 138, Width = 26, Height = 23,
+            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(70, 70, 70), ForeColor = fgW, Font = fUI,
+        };
+        var lblPreview = new Label {
+            Parent = grp, Left = 96, Top = 163, Width = 380, Height = 17,
+            Font = new Font("Segoe UI", 8F, FontStyle.Italic),
+            ForeColor = Color.FromArgb(100, 170, 100),
+        };
         tipFmt.SetToolTip(tbFormat,
             "Format-String — Beispiele:\r\n" +
             "  [sem]                          → 1.2.3  (SemVer mit Reset)\r\n" +
@@ -1288,42 +1849,44 @@ class DarkColorTable : ProfessionalColorTable {
             "  {YYYY}.{MM}.{#build}           → 2026.03.47\r\n" +
             "  {YYYY}.[{#major}.{#minor}.{#patch}]\r\n" +
             "  [{#major}.{#minor}]-{alpha|beta|prod}\r\n" +
+            "  {stage}                        → aus globaler Liste\r\n" +
             "  [*8]                           → Freitext, max. 8 Zeichen");
 
         // ── Per-project ignore ─────────────────────────────────────────────────
         new Label {
-            Parent = grp, Left = 8, Top = 170, Width = 556, Height = 14,
+            Parent = grp, Left = 8, Top = 187, Width = 556, Height = 14,
             Text = "Per-project ignore  (prefix ! to re-include a global entry)",
             Font = new Font("Segoe UI", 7.5F, FontStyle.Italic),
             ForeColor = Color.FromArgb(140, 140, 145),
         };
         var tipIgnore = new ToolTip();
-        tipIgnore.SetToolTip(GrpLbl("Dirs:",  186), "One entry per line.\nPrefix ! to re-include a global entry, e.g. !bin");
-        var tbIgnoreDirs  = new TextBox { Parent = grp, Left = 96, Top = 184, Width = 460, Height = 38, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical };
+        tipIgnore.SetToolTip(GrpLbl("Ignore dirs:",  203, 104), "One entry per line.\nPrefix ! to re-include a global entry, e.g. !bin");
+        var tbIgnoreDirs  = new TextBox { Parent = grp, Left = 116, Top = 201, Width = 440, Height = 38, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical };
         tipIgnore.SetToolTip(tbIgnoreDirs, "One entry per line.\nPrefix ! to re-include a global entry, e.g. !bin");
-        tipIgnore.SetToolTip(GrpLbl("Files:", 230), "One pattern per line (e.g. *.bak).\nPrefix ! to re-include a global pattern.");
-        var tbIgnoreFiles = new TextBox { Parent = grp, Left = 96, Top = 228, Width = 460, Height = 38, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical };
+        tipIgnore.SetToolTip(GrpLbl("Ignore files:", 247, 104), "One pattern per line (e.g. *.bak).\nPrefix ! to re-include a global pattern.");
+        var tbIgnoreFiles = new TextBox { Parent = grp, Left = 116, Top = 245, Width = 440, Height = 38, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical };
         tipIgnore.SetToolTip(tbIgnoreFiles, "One pattern per line (e.g. *.bak).\nPrefix ! to re-include a global pattern.");
 
         // ── Git hook ──────────────────────────────────────────────────────────
         var btnHook = new Button {
-            Parent = grp, Left = 96, Top = 278, Width = 220, Height = 26,
+            Parent = grp, Left = 96, Top = 295, Width = 220, Height = 26,
             FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI,
             Text = "Git-Hook installieren",
         };
         var lblHookInfo = new Label {
-            Parent = grp, Left = 326, Top = 281, Width = 226, Height = 20,
+            Parent = grp, Left = 326, Top = 298, Width = 226, Height = 20,
             Font = new Font("Segoe UI", 8F), ForeColor = Color.FromArgb(130, 130, 135),
             Text = "pre-commit hook für dieses Repo",
         };
         // ── Save / Cancel ─────────────────────────────────────────────────────
-        var btnSave   = new Button { Parent = dlg, Text = L.T("btn.save"),   Left = 396, Top = 578, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
-        var btnCancel = new Button { Parent = dlg, Text = L.T("btn.cancel"), Left = 504, Top = 578, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI, DialogResult = DialogResult.Cancel };
+        var btnSave   = new Button { Parent = dlg, Text = L.T("btn.save"),   Left = 396, Top = 675, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
+        var btnCancel = new Button { Parent = dlg, Text = L.T("btn.cancel"), Left = 504, Top = 675, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI, DialogResult = DialogResult.Cancel };
         dlg.CancelButton = btnCancel;
 
         // ── Logic ─────────────────────────────────────────────────────────────
-        int  current = -1;
-        bool loading = false;
+        int     current              = -1;
+        bool    loading              = false;
+        Action  updateFormatPreview  = () => { };
 
         string DisplayName(ProjectEntry e) {
             if (!string.IsNullOrWhiteSpace(e.Name)) return e.Name;
@@ -1418,6 +1981,29 @@ class DarkColorTable : ProfessionalColorTable {
         tbFormat.Leave      += (s, e) => Flush();
         tbIgnoreDirs.Leave  += (s, e) => Flush();
         tbIgnoreFiles.Leave += (s, e) => Flush();
+        tbFormat.TextChanged += (s, e) => updateFormatPreview();
+        tbGlobalLists.TextChanged += (s, e) => {
+            globalLists = ListsTextToDict(tbGlobalLists.Text);
+            updateFormatPreview();
+        };
+        btnFormatHelp.Click += (s, e) => {
+            string helpUrl = L.Lang == "de"
+                ? "https://mbaas2.github.io/VerBump/de/#format"
+                : "https://mbaas2.github.io/VerBump/#format";
+            OpenUrl(helpUrl);
+        };
+        updateFormatPreview = () => {
+            string fmt = tbFormat.Text.Trim();
+            if (string.IsNullOrEmpty(fmt)) { lblPreview.Text = ""; return; }
+            try {
+                string preview = new FormatScheme(fmt, globalLists).Refresh("");
+                lblPreview.Text      = "→ " + preview;
+                lblPreview.ForeColor = Color.FromArgb(100, 170, 100);
+            } catch {
+                lblPreview.Text      = "⚠ Ungültiger Format-String";
+                lblPreview.ForeColor = Color.FromArgb(200, 80, 80);
+            }
+        };
         btnHook.Click += (s, e) => {
             if (current < 0 || current >= entries.Count) return;
             string dir = entries[current].Path.Trim('"');
@@ -1495,6 +2081,9 @@ class DarkColorTable : ProfessionalColorTable {
             settings.Paths       = entries;
             settings.IgnoreDirs  = TextToList(tbGlobalIgnoreDirs.Text);
             settings.IgnoreFiles = TextToList(tbGlobalIgnoreFiles.Text);
+            settings.Lists       = ListsTextToDict(tbGlobalLists.Text);
+            appCfg.HistoryMaxLength = (int)nudHistory.Value;
+            SaveAppConfig(appCfg);
             try {
                 File.WriteAllText(jsonPath, JsonSerializer.Serialize(settings,
                     new JsonSerializerOptions { WriteIndented = true }));
@@ -1506,10 +2095,10 @@ class DarkColorTable : ProfessionalColorTable {
             dlg.DialogResult = DialogResult.OK;
         };
 
-        RefreshList(0);
-        LoadEntry(0);
+        RefreshList(Math.Max(0, Math.Min(initialEntryIndex, entries.Count - 1)));
+        LoadEntry(Math.Max(0, Math.Min(initialEntryIndex, entries.Count - 1)));
         new Label {
-            Parent = dlg, Left = 12, Top = 654, Width = 592, Height = 16,
+            Parent = dlg, Left = 12, Top = 688, Width = 592, Height = 16,
             Text = jsonPath,
             Font = new Font("Segoe UI", 7.5F),
             ForeColor = Color.FromArgb(110, 110, 115),
@@ -1517,8 +2106,7 @@ class DarkColorTable : ProfessionalColorTable {
         };
 
         if (dlg.ShowDialog(owner?.Visible == true ? owner : null) == DialogResult.OK) {
-            if (owner?.Visible == true) owner.Close();
-            Run();
+            if (owner?.Visible == true) { ShouldRestart = true; owner.Close(); }
         }
     }
 
@@ -1526,6 +2114,20 @@ class DarkColorTable : ProfessionalColorTable {
 
     static string GitHookPath(string projectDir) =>
         Path.Combine(projectDir, ".git", "hooks", "pre-commit");
+
+    static int CompareVersionStrings(string a, string b) {
+        var pa = System.Text.RegularExpressions.Regex.Split(a ?? "", @"[^a-zA-Z0-9]+");
+        var pb = System.Text.RegularExpressions.Regex.Split(b ?? "", @"[^a-zA-Z0-9]+");
+        for (int i = 0; i < Math.Max(pa.Length, pb.Length); i++) {
+            string sa = i < pa.Length ? pa[i] : "0";
+            string sb = i < pb.Length ? pb[i] : "0";
+            int c = int.TryParse(sa, out int ia) && int.TryParse(sb, out int ib)
+                ? ia.CompareTo(ib)
+                : string.Compare(sa, sb, StringComparison.OrdinalIgnoreCase);
+            if (c != 0) return c;
+        }
+        return 0;
+    }
 
     static bool HasGitHook(string projectDir) {
         string hookFile = GitHookPath(projectDir);
@@ -1566,27 +2168,48 @@ class DarkColorTable : ProfessionalColorTable {
 
     // ── Recent settings files ──────────────────────────────────────────────────
 
-    const int MaxRecentSettings = 5;
+    static string AppConfigFile() =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VerBump", "VerBump-config.json");
 
-    static string RecentSettingsFile() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VerBump", "recent-settings.json");
-
-    static List<string> LoadRecentSettings() {
+    static AppConfig LoadAppConfig() {
         try {
-            string f = RecentSettingsFile();
-            if (File.Exists(f)) return JsonSerializer.Deserialize<List<string>>(File.ReadAllText(f)) ?? new();
+            string f = AppConfigFile();
+            if (File.Exists(f))
+                return JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(f),
+                    new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) ?? new();
+            // Migrate from old recent-settings.json
+            string old = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VerBump", "recent-settings.json");
+            if (File.Exists(old)) {
+                var recent = JsonSerializer.Deserialize<List<string>>(File.ReadAllText(old)) ?? new();
+                return new AppConfig { RecentSettings = recent };
+            }
         } catch { }
         return new();
     }
 
-    static void AddRecentSetting(string settingsPath) {
+    static void SaveAppConfig(AppConfig cfg) {
         try {
-            var recent = LoadRecentSettings();
-            recent.RemoveAll(p => string.Equals(p, settingsPath, StringComparison.OrdinalIgnoreCase));
-            recent.Insert(0, settingsPath);
-            if (recent.Count > MaxRecentSettings) recent = recent.Take(MaxRecentSettings).ToList();
-            File.WriteAllText(RecentSettingsFile(), JsonSerializer.Serialize(recent));
+            Directory.CreateDirectory(Path.GetDirectoryName(AppConfigFile()));
+            File.WriteAllText(AppConfigFile(), JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true }));
         } catch { }
+    }
+
+    static VerBumpPolicy LoadPolicy() {
+        try {
+            string f = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "VerBump", "policy.json");
+            if (File.Exists(f))
+                return JsonSerializer.Deserialize<VerBumpPolicy>(File.ReadAllText(f),
+                    new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) ?? new();
+        } catch { }
+        return new();   // default: AllowHookBypass = true
+    }
+
+    static void AddToHistory(List<string> list, string path, int maxLen) {
+        list.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+        list.Insert(0, path);
+        if (list.Count > maxLen) list.RemoveRange(maxLen, list.Count - maxLen);
     }
 
     static void RunSilentBump(Settings settings, string versionFilePath, int partIndex) {
@@ -1600,7 +2223,7 @@ class DarkColorTable : ProfessionalColorTable {
             } catch { return false; }
         }) ?? new ProjectEntry(); // default: SemVer
 
-        IVersionScheme scheme = SchemeFactory.Create(entry);
+        IVersionScheme scheme = SchemeFactory.Create(entry, settings.Lists);
 
         string current;
         try { current = File.ReadAllText(versionFile).Trim(); }
@@ -1707,16 +2330,15 @@ class DarkColorTable : ProfessionalColorTable {
     }
 
     static void ShowAboutDialog(Form owner, string version) {
-        Color bgDark  = Color.FromArgb(30, 30, 30);
-        Color bgMid   = Color.FromArgb(45, 45, 48);
-        Color fgW     = Color.White;
-        Color fgDim   = Color.FromArgb(160, 160, 165);
+        Color bgMid   = Theme.BgMid;
+        Color fgW     = Theme.Fg;
+        Color fgDim   = Theme.FgMuted;
         Color accent  = Color.FromArgb(72, 199, 142);
         Font  fUI     = new Font("Segoe UI", 9F);
 
         using var dlg = new Form {
             Text            = L.T("info.title"),
-            Width           = 360, Height = 362,
+            Width           = 360, Height = 260,
             StartPosition   = FormStartPosition.CenterParent,
             BackColor       = bgMid, ForeColor = fgW,
             FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -1747,74 +2369,57 @@ class DarkColorTable : ProfessionalColorTable {
             Width = 200, Height = 18, Font = fUI, ForeColor = accent,
         };
         new Label {
-            Parent = dlg, Text = $"Language: {L.Lang.ToUpper()}", Left = 106, Top = 74,
+            Parent = dlg, Text = L.T("info.language", L.Lang.ToUpper()), Left = 106, Top = 74,
             Width = 200, Height = 18, Font = fUI, ForeColor = fgDim,
         };
 
         // ── Separator ──────────────────────────────────────────────────────────
         new Label {
             Parent = dlg, Left = 24, Top = 100, Width = 294, Height = 1,
-            BackColor = Color.FromArgb(70, 70, 75),
+            BackColor = Theme.Sep,
         };
 
         // ── Description ────────────────────────────────────────────────────────
         new Label {
-            Parent = dlg, Text = "Version file manager for Windows developers.\nFree & open source — MIT License.",
+            Parent = dlg, Text = L.T("info.description"),
             Left = 24, Top = 112, Width = 294, Height = 40,
-            Font = fUI, ForeColor = fgDim, AutoSize = false,
+            Font = fUI, ForeColor = fgDim, AutoSize = false, UseMnemonic = false,
         };
-
-        // ── Links ──────────────────────────────────────────────────────────────
-        static LinkLabel MakeLink(Form f, string text, string url, int top, Color col) {
-            var lnk = new LinkLabel {
-                Parent = f, Text = text, Left = 24, Top = top, Width = 294, Height = 20,
-                Font = new Font("Segoe UI", 9F), BackColor = Color.Transparent,
-                LinkColor = col, ActiveLinkColor = Color.White,
-            };
-            lnk.Click += (s, e) => {
-                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); }
-                catch { }
-            };
-            return lnk;
-        }
-
-        MakeLink(dlg, "🌐  mbaas2.github.io/VerBump",       "https://mbaas2.github.io/VerBump/",       162, accent);
-        MakeLink(dlg, "❤  Sponsor this project on GitHub", "https://github.com/sponsors/mbaas2",       184, Color.FromArgb(255, 120, 150));
-        MakeLink(dlg, "✉  Report an issue",                "https://github.com/mbaas2/VerBump/issues", 206, Color.FromArgb(255, 190, 80));
-        MakeLink(dlg, "⌥  View source on GitHub",          "https://github.com/mbaas2/VerBump",        228, Color.FromArgb(130, 180, 255));
 
         // ── Separator ──────────────────────────────────────────────────────────
         new Label {
-            Parent = dlg, Left = 24, Top = 258, Width = 294, Height = 1,
-            BackColor = Color.FromArgb(70, 70, 75),
+            Parent = dlg, Left = 24, Top = 158, Width = 294, Height = 1,
+            BackColor = Theme.Sep,
         };
 
         // ── Copyright ─────────────────────────────────────────────────────────
         new Label {
             Parent = dlg, Text = $"© {DateTime.Today.Year} Michael Baas",
-            Left = 24, Top = 267, Width = 200, Height = 18,
+            Left = 24, Top = 167, Width = 200, Height = 18,
             Font = new Font("Segoe UI", 8F), ForeColor = fgDim,
         };
         var lnkMail = new LinkLabel {
             Parent = dlg, Text = "✉ verbump@mbaas.de",
-            Left = 24, Top = 285, Width = 200, Height = 18,
+            Left = 24, Top = 185, Width = 200, Height = 18,
             Font = new Font("Segoe UI", 8F), BackColor = Color.Transparent,
-            LinkColor = fgDim, ActiveLinkColor = Color.White,
+            LinkColor = fgDim, ActiveLinkColor = fgW,
         };
-        lnkMail.Click += (s, e) => {
-            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("mailto:verbump@mbaas.de") { UseShellExecute = true }); }
-            catch { }
-        };
+        lnkMail.Click += (s, e) => OpenUrl("mailto:verbump@mbaas.de");
 
         // ── Close button ──────────────────────────────────────────────────────
         var btnClose = new Button {
-            Parent = dlg, Text = "OK", Left = 244, Top = 270, Width = 74, Height = 28,
-            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(60, 60, 65),
+            Parent = dlg, Text = "OK", Left = 244, Top = 170, Width = 74, Height = 28,
+            FlatStyle = FlatStyle.Flat, BackColor = Theme.BgLight,
             ForeColor = fgW, Font = fUI, DialogResult = DialogResult.OK,
         };
         dlg.AcceptButton = btnClose;
 
         dlg.ShowDialog(owner?.Visible == true ? owner : null);
+    }
+
+    static void OpenUrl(string url) {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch { }
     }
 
     static bool OpenWithEditor(string editor, string filePath) {

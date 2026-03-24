@@ -99,7 +99,11 @@
       <div class="buttons is-centered">
         <a class="button is-success is-medium btn-download"
            href="https://github.com/mbaas2/VerBump/releases/latest">
-          ⬇ Aktuelle Version herunterladen
+          ⬇ Installer herunterladen
+        </a>
+        <a class="button is-light is-medium"
+           href="https://github.com/mbaas2/VerBump/releases/latest/download/VerBump.exe">
+          ⬇ Portable .exe
         </a>
         <a class="button is-dark is-medium"
            href="https://github.com/mbaas2/VerBump" target="_blank" rel="noopener">
@@ -107,7 +111,7 @@
         </a>
       </div>
       <p class="has-text-grey mt-4 hero-meta">
-        Windows 10/11 · Eigenständige EXE · Kein Installer · Kostenlos &amp; Open Source
+        Windows 10/11 · Installer oder portable EXE · Kostenlos &amp; Open Source
       </p>
     </div>
   </div>
@@ -135,6 +139,12 @@
             Blick den Status aller Repos im Blick — Orange bedeutet: hier wurde etwas
             geändert, aber die Version noch nicht erhöht. Es funktioniert, weil es einen
             Moment des Innehaltens erzwingt: ein Blick, alle Projekte, bevor irgendetwas rausgeht.
+          </p>
+          <p class="is-size-5 mb-4">
+            Inzwischen hat VerBump meinen Workflow aber völlig verändert: Mit installiertem
+            Git-Hook öffne ich es gar nicht mehr manuell. Der Hook greift vor jedem Commit
+            und zeigt mir genau, was veraltet ist — ich bumpe direkt dort, oder überspringe
+            es bei einem WIP-Commit. Seit Monaten habe ich keinen Versions-Bump mehr vergessen.
           </p>
           <p class="is-size-5 mb-4">
             Das spart mir mehr Sorgen, Nacharbeit und Zeit, als ich für die
@@ -274,6 +284,7 @@
           <h3 class="title is-5">Explorer-Kontextmenü</h3>
           <p>Rechtsklick auf Ordner oder <code>VERSION</code>-Datei: VerBump öffnen oder
              Major&thinsp;/&thinsp;Minor&thinsp;/&thinsp;Patch lautlos erhöhen — kein Fenster, nur eine kurze Benachrichtigung.</p>
+          <p class="is-size-7 has-text-grey mt-2">Installation erforderlich. Settings-Dateien müssen <code>verbump-settings.json</code> heißen, damit der Kontextmenü-Eintrag erscheint.</p>
         </div>
       </div>
 
@@ -329,41 +340,51 @@
             </tr>
             <tr>
               <td><strong>Zusammengehörige Projektgruppen</strong> (z. B. Backend + Mobile + Shared Lib)</td>
-              <td>Pro Gruppe eine eigene <code>settings.json</code> anlegen. Mit <em>Einstellungen öffnen…</em>
-                  in der Toolbar zwischen ihnen wechseln — die letzten werden gemerkt.</td>
+              <td>Pro Gruppe eine eigene <code>verbump-settings.json</code> anlegen. Mit
+                  <em>Datei › Settings-Datei öffnen</em> wechseln — die letzten werden gemerkt.
+                  Der Name <code>verbump-settings.json</code> aktiviert außerdem den Explorer-Kontextmenü-Eintrag.</td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- Versionsschemas -->
-    <div class="content mb-6">
-      <h3>Versionsschemas</h3>
+    <!-- Format-Strings -->
+    <div class="content mb-6" id="format">
+      <h3>Format-Strings</h3>
+      <p>Das Versionsschema jedes Projekts wird durch einen einzigen <strong>Format-String</strong> definiert.
+         Der Einstellungs-Dialog zeigt beim Tippen eine Live-Vorschau; der <strong>?</strong>-Button
+         führt direkt hierher.</p>
       <div class="table-container">
         <table class="table is-bordered is-striped is-narrow scheme-table">
           <thead>
-            <tr><th>Schema</th><th>Beispiel</th><th>Bump-Schaltflächen</th><th>Hinweis</th></tr>
+            <tr><th>Token</th><th>Bedeutung</th><th>Beispielergebnis</th></tr>
           </thead>
           <tbody>
-            <tr>
-              <td>semver</td><td>1.4.2</td>
-              <td>Major · Minor · Patch</td>
-              <td>Standard. Niedrigere Teile werden auf 0 zurückgesetzt, wenn „Reset on bump" aktiviert ist.</td>
-            </tr>
-            <tr>
-              <td>calver</td><td>25.03.1</td>
-              <td>Datumsteile automatisch · numerische Teile manuell</td>
-              <td>Format konfigurierbar, z. B. <code>YY.MM.patch</code> oder <code>YYYY.MM.DD.build</code>.</td>
-            </tr>
-            <tr>
-              <td>sequential</td><td>major.minor.patch</td>
-              <td>Eine Schaltfläche pro Teil</td>
-              <td>Vollständig anpassbare Teilnamen über das Format-Feld, z. B. <code>release.build</code>.</td>
-            </tr>
+            <tr><td>[sem]</td><td>SemVer-Kurzform — wird zu <code>[{#major}.{#minor}.{#patch}]</code> erweitert</td><td>1.2.3</td></tr>
+            <tr><td>{#name}</td><td>Numerischer Zähler — ein Bump-Button erhöht ihn um 1</td><td><code>{#major}.{#minor}</code> → 1.0</td></tr>
+            <tr><td>{YYYY} {YY} {MM} {DD}</td><td>Datums-Tokens — bei jedem Refresh automatisch befüllt, kein Button</td><td><code>{YYYY}.{MM}.{#build}</code> → 2026.03.0</td></tr>
+            <tr><td>{wert1|wert2|wert3}</td><td>Inline-Liste — Bump-Button durchläuft die Werte</td><td><code>{alpha|beta|prod}</code> → alpha</td></tr>
+            <tr><td>{listenname}</td><td>Benannte Liste — Werte global unter <em>Einstellungen → Lists</em> definiert</td><td><code>{stage}</code></td></tr>
+            <tr><td>[*N]</td><td>Freitext-Feld, max. N Zeichen — ein Bump-Button</td><td><code>[*8]</code></td></tr>
+            <tr><td>[…]</td><td><strong>Reset-Gruppe</strong> — wird ein Token erhöht, werden alle folgenden Tokens der Gruppe auf ihren Standardwert zurückgesetzt (0 bzw. erster Listenwert)</td><td><code>[{#major}.{#minor}.{#patch}]</code></td></tr>
           </tbody>
         </table>
       </div>
+      <p><strong>Beispiele:</strong></p>
+      <div class="table-container">
+        <table class="table is-bordered is-narrow scheme-table">
+          <thead><tr><th>Format-String</th><th>Beispielversion</th><th>Bump-Buttons</th></tr></thead>
+          <tbody>
+            <tr><td>[sem]</td><td>1.2.3</td><td>major+ &nbsp;·&nbsp; minor+ &nbsp;·&nbsp; patch+</td></tr>
+            <tr><td>{YYYY}.{MM}.{#build}</td><td>2026.03.47</td><td>build+</td></tr>
+            <tr><td>[{#major}.{#minor}]-{alpha|beta|prod}</td><td>1.0-alpha</td><td>major+ &nbsp;·&nbsp; minor+ &nbsp;·&nbsp; alpha|beta|prod+</td></tr>
+            <tr><td>{YYYY}.[{#major}.{#minor}.{#patch}]</td><td>2026.1.0.0</td><td>major+ &nbsp;·&nbsp; minor+ &nbsp;·&nbsp; patch+</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="is-size-7 has-text-grey">Alte Einstellungen (<code>semver</code>, <code>calver</code>, <code>sequential</code>) werden beim ersten Laden
+         automatisch migriert — keine Änderungen an der <code>settings.json</code> erforderlich.</p>
     </div>
 
     <!-- Tastaturkürzel -->
@@ -401,13 +422,36 @@
       <pre><code>VerBump.exe --check               # Projekt im aktuellen Verzeichnis prüfen
 VerBump.exe --check C:\mein\Projekt</code></pre>
       <p>Exit-Code <code>0</code> = VERSION aktuell &nbsp;·&nbsp; <code>1</code> = veraltet (Commit blockiert).</p>
-      <div class="notification is-warning is-light mt-4">
-        <strong>Wann sinnvoll:</strong> Der Hook passt am besten zu einem
-        <em>Bump-before-Push</em>-Workflow — ein bewusster „Release-Commit", bei dem die
-        Version kurz vor dem Veröffentlichen erhöht wird. Wer während der Entwicklung
-        häufig committed ohne die Version zu erhöhen, wird vom Hook bei jedem Commit
-        blockiert. Einzelne Commits überspringen mit <code>git commit --no-verify</code>,
-        oder den Hook in den Einstellungen einfach deaktivieren bis zum nächsten Release.
+      <p>
+        Der Hook-Dialog zeigt nur das betroffene Projekt (nicht alle Projekte aus den Settings).
+        Es stehen drei Buttons zur Verfügung:
+      </p>
+      <ul>
+        <li><strong>✓ Bump &amp; Commit</strong> — Version erhöhen und Commit durchlassen.</li>
+        <li><strong>↷ Jetzt überspringen</strong> — diesen Commit ohne Bump durchlassen
+            (nützlich für WIP-Commits oder reine Doku-Änderungen).</li>
+        <li><strong>✗ Commit stoppen</strong> — Commit abbrechen (Exit&nbsp;1).</li>
+      </ul>
+      <p>
+        <strong>Corporate-Deployments:</strong> Um Bumping bei jedem Commit zu erzwingen und
+        <em>Jetzt überspringen</em> zu deaktivieren, Datei
+        <code>C:\ProgramData\VerBump\policy.json</code> anlegen:
+      </p>
+      <pre><code>{ "allowHookBypass": false }</code></pre>
+      <p>
+        Diese Datei wird maschinenübergreifend ausgewertet; Benutzer können sie nicht
+        überschreiben. Deployment per Installer oder Gruppenrichtlinie. Bei
+        <code>allowHookBypass: false</code> sind nur <em>Bump &amp; Commit</em>
+        und <em>Commit stoppen</em> sichtbar.
+      </p>
+      <div class="notification is-info is-light mt-4">
+        <strong>Der Hook passt zu jedem Commit-Stil.</strong>
+        Bei WIP-Commits oder reinen Doku-Änderungen einfach <strong>Jetzt überspringen</strong>
+        klicken — kein <code>git commit --no-verify</code> nötig. Der Bump-Dialog erscheint
+        immer dann, wenn eine Quelldatei neuer als die aktuelle VERSION ist — als sanfte
+        Erinnerung, nicht als unbedingter Blocker. Teams, die Bumping bei jedem Commit
+        erzwingen müssen, können <em>Jetzt überspringen</em> über die Policy-Datei oben
+        deaktivieren.
       </div>
     </div>
 

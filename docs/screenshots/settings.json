@@ -1,0 +1,36 @@
+{
+  "ignoreDirs": [
+    ".git",
+    ".svn",
+    ".hg",
+    "node_modules",
+    "bin",
+    "obj",
+    ".vs",
+    ".idea",
+    "__pycache__",
+    "dist",
+    "build"
+  ],
+  "ignoreFiles": [
+    "*.bak",
+    "*.tmp",
+    "*.log",
+    "Thumbs.db",
+    ".DS_Store"
+  ],
+  "paths": [
+    {
+      "path": "C:\\Beispiel\\Pfad1",
+      "name": "",
+      "icon": "",
+      "scheme": "semver",
+      "format": "",
+      "resetOnBump": true,
+      "backup": false,
+      "ignoreDirs": [],
+      "ignoreFiles": []
+    }
+  ],
+  "lists": {}
+}
