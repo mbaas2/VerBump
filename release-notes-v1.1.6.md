@@ -157,4 +157,4 @@
   ein einzelnes Format-Feld (immer sichtbar) mit Tooltip-Syntaxbeispielen ersetzt.
   Das Format-Feld zeigt jetzt eine Live-Vorschau und hebt Parse-Fehler hervor;
   ein **?**-Button öffnet die Format-String-Dokumentation direkt.
-- Statusleiste zeigt den aktiven Format-String statt nur den Schema-Namen.
+- Statusleiste zeigt den aktiven Format-String statt nur den Schema-Namen.release-notes-v1.1.4.md

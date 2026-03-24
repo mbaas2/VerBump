@@ -1,4 +1,4 @@
-# What's new in vNEXT
+# What's new in v1.1.6
 
 ## Improvements
 
@@ -8,7 +8,7 @@
 
 ---
 
-## Was ist neu in vNEXT
+## Was ist neu in v1.1.6
 
 ## Verbesserungen
 
