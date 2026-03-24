@@ -12,7 +12,7 @@ of all your repos at a glance.
 
 → **[Website & full documentation](https://mbaas2.github.io/VerBump/)**
 
-![VerBump main window](docs/screenshots/main.png)
+![VerBump main window](docs/screenshots/main-en.png)
 
 ## Features
 

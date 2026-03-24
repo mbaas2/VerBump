@@ -508,8 +508,8 @@ public static class L {
     static Dictionary<string, string> _d = new();
     public static string Lang { get; private set; } = "en";
 
-    public static void Load(string baseDir) {
-        string lang = WindowsUILanguage();
+    public static void Load(string baseDir, string forceLang = null) {
+        string lang = forceLang ?? WindowsUILanguage();
         // 1. Datei-System (ermöglicht Custom-Übersetzungen neben der EXE)
         string FindFile(string l) {
             foreach (var dir in new[] { baseDir, Path.GetDirectoryName(Environment.ProcessPath),
@@ -682,6 +682,7 @@ class ThemedColorTable : ProfessionalColorTable {
     static int          SilentBumpPart       = -1;   // 0-based; -1 = no silent bump
     static bool         CheckMode            = false;
     static bool         ShouldRestart        = false;
+    static string       ForceLang            = null; // --lang=XX overrides OS language
 
     [STAThread]
     public static void Main(string[] args) {
@@ -689,6 +690,8 @@ class ThemedColorTable : ProfessionalColorTable {
             if (arg.StartsWith("--bump=", StringComparison.OrdinalIgnoreCase)) {
                 if (int.TryParse(arg[7..], out int b) && b >= 1 && b <= 4)
                     SilentBumpPart = b - 1;
+            } else if (arg.StartsWith("--lang=", StringComparison.OrdinalIgnoreCase)) {
+                ForceLang = arg[7..].ToLower();
             } else if (arg.Equals("--check", StringComparison.OrdinalIgnoreCase)) {
                 CheckMode = true;
             } else {
@@ -722,7 +725,7 @@ class ThemedColorTable : ProfessionalColorTable {
         Directory.CreateDirectory(appDataDir);
         Log.Init(appDataDir);
         Theme.Detect();
-        L.Load(baseDir);
+        L.Load(baseDir, VerBump.ForceLang);
         var appConfig = LoadAppConfig();
         var policy    = LoadPolicy();
 
@@ -773,7 +776,7 @@ class ThemedColorTable : ProfessionalColorTable {
                 new Label { Parent = md, Left = 16, Top = 16, Width = 480, Height = 52,
                     Text = L.T("settings.created", jsonPath),
                     Font = new Font("Segoe UI", 9F), ForeColor = fgW };
-                var mdOk = new Button { Parent = md, Text = "OK", Left = 412, Top = 74, Width = 80, Height = 28,
+                var mdOk = new Button { Parent = md, Text = L.T("btn.ok"), Left = 412, Top = 74, Width = 80, Height = 28,
                     FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW,
                     DialogResult = DialogResult.OK };
                 md.AcceptButton = mdOk;
@@ -826,7 +829,7 @@ class ThemedColorTable : ProfessionalColorTable {
         if (unsavedMode) {
             formTitle = InitialVersionPaths.Count == 1
                 ? $"VerBump  v{appVersion}  —  {Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(InitialVersionPaths[0])))}"
-                : $"VerBump  v{appVersion}  —  {InitialVersionPaths.Count} Projekte";
+                : $"VerBump  v{appVersion}  —  {L.T("form.projects_count", InitialVersionPaths.Count)}";
         } else if (OverrideSettingsPath != null) {
             formTitle = $"VerBump  v{appVersion}  —  {Path.GetFileName(OverrideSettingsPath)}";
         }
@@ -861,7 +864,7 @@ class ThemedColorTable : ProfessionalColorTable {
         int maxFormWidth = Math.Max(720, workingArea.Width - 40);
         int requestedFormWidth = Math.Min(Math.Max(720, requestedContentWidth + 40), maxFormWidth);
         if (CheckMode && singleVersionPath != null)
-            formTitle = $"VerBump — Git Hook — {Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(singleVersionPath))) ?? "?"}";
+            formTitle = L.T("form.git_hook_title", Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(singleVersionPath))) ?? "?");
         using var form = new Form {
             Text = formTitle,
             Width = requestedFormWidth, Height = 80 + (willHaveUnsavedEntry ? InitialVersionPaths.Count : settings.Paths.Count) * 55 + 138,
@@ -933,12 +936,12 @@ class ThemedColorTable : ProfessionalColorTable {
                 var hint = sch.GetTokenAt(vtb.Text, vtb.SelectionStart);
                 if (hint == null) {
                     if (!sch.Matches(vtb.Text.Trim()))
-                        setStatus("⚠ Wert passt nicht zum Format", true);
+                        setStatus(L.T("status.hint_mismatch"), true);
                     return;
                 }
                 string msg = hint.IsList
-                    ? $"Liste: {hint.Label}  ·  Alt+↓ für Auswahl"
-                    : $"Zahl: {hint.Label}  ·  direkt tippen";
+                    ? L.T("status.hint_list", hint.Label)
+                    : L.T("status.hint_number", hint.Label);
                 setStatus(msg, false);
             }
 
@@ -976,7 +979,7 @@ class ThemedColorTable : ProfessionalColorTable {
         int ctxTargetIndex = -1;
         var rowCtx           = new ContextMenuStrip { Renderer = new ToolStripProfessionalRenderer(new ThemedColorTable()) };
         var ctxEdit          = new ToolStripMenuItem(L.T("menu.edit_settings"))  { ForeColor = fgW };
-        var ctxExplore       = new ToolStripMenuItem("Ordner im Explorer öffnen") { ForeColor = fgW };
+        var ctxExplore       = new ToolStripMenuItem(L.T("menu.open_explorer")) { ForeColor = fgW };
         var ctxAddVersionFav = new ToolStripMenuItem(L.T("menu.add_version_fav")) { ForeColor = Color.FromArgb(255, 200, 60) };
         var ctxAddToSettings = new ToolStripMenuItem(L.T("toolbar.add_project")) { ForeColor = fgW };
         var ctxBottomSep    = new ToolStripSeparator();
@@ -1041,14 +1044,14 @@ class ThemedColorTable : ProfessionalColorTable {
                 BackColor = bgMid, ForeColor = fgW,
             };
             new Label { Parent = addDlg, Left = 12, Top = 10, Width = 390, Height = 20,
-                Text = "Eintrag aufnehmen in:", Font = new Font("Segoe UI", 9F), ForeColor = fgW };
+                Text = L.T("settings.add_target_label"), Font = new Font("Segoe UI", 9F), ForeColor = fgW };
 
             if (jsonPath != null) {
                 string shortPath = Path.GetFileName(Path.GetDirectoryName(jsonPath))
                                    + "/" + Path.GetFileName(jsonPath);
                 var btnActive = new Button {
                     Parent = addDlg, Left = 12, Top = 34, Width = 388, Height = 28,
-                    Text = $"Aktive Settings: {shortPath}",
+                    Text = L.T("settings.active_settings", shortPath),
                     FlatStyle = FlatStyle.Flat,
                     BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW,
                     Font = new Font("Segoe UI", 9F),
@@ -1060,7 +1063,7 @@ class ThemedColorTable : ProfessionalColorTable {
             int row2 = jsonPath != null ? 68 : 34;
             var btnOther = new Button {
                 Parent = addDlg, Left = 12, Top = row2, Width = 194, Height = 28,
-                Text = "Andere / neue Datei\u2026",
+                Text = L.T("settings.other_or_new_file"),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = bgBtn, ForeColor = fgW,
                 Font = new Font("Segoe UI", 9F),
@@ -1070,7 +1073,7 @@ class ThemedColorTable : ProfessionalColorTable {
                                : InitialVersionPaths.Count > 0 ? Path.GetDirectoryName(InitialVersionPaths[0])
                                : appDataDir;
                 using var sfd = new SaveFileDialog {
-                    Title = "settings.json wählen oder neu erstellen",
+                    Title = L.T("settings.choose_or_create"),
                     Filter = "JSON|*.json", FileName = "settings.json",
                     InitialDirectory = initDir,
                 };
@@ -1432,7 +1435,7 @@ class ThemedColorTable : ProfessionalColorTable {
 
         // ── ? ──
         var menuHelp    = new ToolStripMenuItem("?") { ForeColor = fgW };
-        var menuWebsite = new ToolStripMenuItem("🌐  mbaas2.github.io/VerBump") { ForeColor = fgW, BackColor = darkBg };
+        var menuWebsite = new ToolStripMenuItem(L.T("menu.website")) { ForeColor = fgW, BackColor = darkBg };
         var menuSponsor = new ToolStripMenuItem(L.T("info.sponsor"))            { ForeColor = Color.FromArgb(255, 120, 150), BackColor = darkBg };
         var menuReport  = new ToolStripMenuItem(L.T("info.report"))             { ForeColor = Color.FromArgb(255, 190, 80),  BackColor = darkBg };
         var menuSource  = new ToolStripMenuItem(L.T("info.source"))             { ForeColor = Color.FromArgb(130, 180, 255), BackColor = darkBg };
@@ -1772,7 +1775,7 @@ class ThemedColorTable : ProfessionalColorTable {
                             uiCaptured.HasIssues = true;
                             uiCaptured.StatusStrip.BackColor = Color.FromArgb(255, 140, 0);
                             uiCaptured.StatusStrip.Width = 8;
-                            string tip = $"{newerFiles.Count} Datei(en) neuer als VERSION:\n" +
+                            string tip = L.T("status.newer_files", newerFiles.Count) + "\n" +
                                          string.Join("\n", newerFiles);
                             uiCaptured.StaleInfo = tip;
                             toolTip.SetToolTip(uiCaptured.StatusStrip, tip);
@@ -1862,27 +1865,27 @@ class ThemedColorTable : ProfessionalColorTable {
 
         // ── Global ignore ──────────────────────────────────────────────────────
         var grpGlobal = new GroupBox {
-            Parent = dlg, Text = "Global", Left = 12, Top = 8, Width = 576, Height = 192,
+            Parent = dlg, Text = L.T("settings.group_global"), Left = 12, Top = 8, Width = 576, Height = 192,
             Font = fUI, ForeColor = Theme.FgDim,
         };
-        new Label { Parent = grpGlobal, Text = "Ignore dirs:",  Left = 8, Top = 22, Width = 104, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
+        new Label { Parent = grpGlobal, Text = L.T("settings.ignore_dirs"),  Left = 8, Top = 22, Width = 104, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
         var tbGlobalIgnoreDirs  = new TextBox { Parent = grpGlobal, Left = 116, Top = 20, Width = 448, Height = 36, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = ListToText(globalIgnoreDirs) };
-        new Label { Parent = grpGlobal, Text = "Ignore files:", Left = 8, Top = 68, Width = 104, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
+        new Label { Parent = grpGlobal, Text = L.T("settings.ignore_files"), Left = 8, Top = 68, Width = 104, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
         var tbGlobalIgnoreFiles = new TextBox { Parent = grpGlobal, Left = 116, Top = 66, Width = 448, Height = 36, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = ListToText(globalIgnoreFiles) };
-        new Label { Parent = grpGlobal, Text = "Lists:", Left = 8, Top = 116, Width = 104, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
+        new Label { Parent = grpGlobal, Text = L.T("settings.lists"), Left = 8, Top = 116, Width = 104, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
         var tbGlobalLists = new TextBox { Parent = grpGlobal, Left = 116, Top = 114, Width = 448, Height = 36, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = DictToListsText(settings.Lists) };
         var tipLists = new ToolTip { AutoPopDelay = 15000, InitialDelay = 300 };
-        tipLists.SetToolTip(tbGlobalLists, "Benannte Listen für Format-Strings. Eine Liste pro Zeile: name: wert1, wert2, wert3\nVerwendung im Format-String als {name}");
-        new Label { Parent = grpGlobal, Text = "History:", Left = 8, Top = 162, Width = 82, Height = 20,
+        tipLists.SetToolTip(tbGlobalLists, L.T("settings.lists_tip"));
+        new Label { Parent = grpGlobal, Text = L.T("settings.history"), Left = 8, Top = 162, Width = 82, Height = 20,
             TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
         var nudHistory = new NumericUpDown { Parent = grpGlobal, Left = 96, Top = 160, Width = 60, Height = 23,
             Minimum = 1, Maximum = 20, Value = appCfg.HistoryMaxLength,
             BackColor = bgLight, ForeColor = fgW, Font = fMono };
         new Label { Parent = grpGlobal, Left = 162, Top = 163, Width = 280, Height = 18,
-            Text = "Max. entries in recent-file lists (Settings + VERSION)", Font = fUI, ForeColor = Color.FromArgb(160, 160, 165) };
+            Text = L.T("settings.history_help"), Font = fUI, ForeColor = Color.FromArgb(160, 160, 165) };
 
         // ── Project list ──────────────────────────────────────────────────────
-        new Label { Parent = dlg, Text = "Projects", Left = 12, Top = 210, Width = 100, Height = 18,
+        new Label { Parent = dlg, Text = L.T("settings.projects"), Left = 12, Top = 210, Width = 100, Height = 18,
             Font = new Font("Segoe UI", 9F, FontStyle.Bold), ForeColor = fgW };
 
         Button SmallBtn(string t, int x) => new Button {
@@ -1902,7 +1905,7 @@ class ThemedColorTable : ProfessionalColorTable {
 
         // ── Detail group ──────────────────────────────────────────────────────
         var grp = new GroupBox {
-            Parent = dlg, Text = "Entry", Left = 12, Top = 330, Width = 576, Height = 335,
+            Parent = dlg, Text = L.T("settings.entry"), Left = 12, Top = 330, Width = 576, Height = 335,
             Font = fUI, ForeColor = Theme.FgDim,
         };
 
@@ -1910,13 +1913,13 @@ class ThemedColorTable : ProfessionalColorTable {
         TextBox GrpTb (int y, int w)    => new TextBox  { Parent = grp, Left = 96, Top = y, Width = w, Height = 23, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono };
         Button  BrowseBtn(int y)        => new Button   { Parent = grp, Text = "…", Left = 472, Top = y, Width = 90, Height = 24, FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI };
 
-        GrpLbl("Path:",    22); var tbPath   = GrpTb(22, 368); var btnBrowsePath = BrowseBtn(22);
+        GrpLbl(L.T("settings.path"),    22); var tbPath   = GrpTb(22, 368); var btnBrowsePath = BrowseBtn(22);
         var lblStatus = new Label { Parent = grp, Left = 96, Top = 50, Width = 460, Height = 18, Font = new Font("Segoe UI", 8.5F) };
-        GrpLbl("Name:",    76); var tbName   = GrpTb(76, 460);
-        GrpLbl("Icon:",   108); var tbIcon   = GrpTb(108, 368); var btnBrowseIcon = BrowseBtn(108);
-        var cbBackup = new CheckBox { Parent = grp, Text = "Backup", Left = 430, Top = 140, Width = 90, Font = fUI, ForeColor = fgW };
+        GrpLbl(L.T("settings.name"),    76); var tbName   = GrpTb(76, 460);
+        GrpLbl(L.T("settings.icon"),   108); var tbIcon   = GrpTb(108, 368); var btnBrowseIcon = BrowseBtn(108);
+        var cbBackup = new CheckBox { Parent = grp, Text = L.T("settings.backup"), Left = 430, Top = 140, Width = 90, Font = fUI, ForeColor = fgW };
         var tipFmt   = new ToolTip { AutoPopDelay = 20000, InitialDelay = 300 };
-        var lblFormat = GrpLbl("Format:", 138); var tbFormat = GrpTb(138, 280);
+        var lblFormat = GrpLbl(L.T("settings.format"), 138); var tbFormat = GrpTb(138, 280);
         var btnFormatHelp = new Button {
             Parent = grp, Text = "?", Left = 382, Top = 138, Width = 26, Height = 23,
             FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(70, 70, 70), ForeColor = fgW, Font = fUI,
@@ -1926,41 +1929,33 @@ class ThemedColorTable : ProfessionalColorTable {
             Font = new Font("Segoe UI", 8F, FontStyle.Italic),
             ForeColor = Color.FromArgb(100, 170, 100),
         };
-        tipFmt.SetToolTip(tbFormat,
-            "Format-String — Beispiele:\r\n" +
-            "  [sem]                          → 1.2.3  (SemVer mit Reset)\r\n" +
-            "  {#major}.{#minor}              → kein Reset\r\n" +
-            "  {YYYY}.{MM}.{#build}           → 2026.03.47\r\n" +
-            "  {YYYY}.[{#major}.{#minor}.{#patch}]\r\n" +
-            "  [{#major}.{#minor}]-{alpha|beta|prod}\r\n" +
-            "  {stage}                        → aus globaler Liste\r\n" +
-            "  [*8]                           → Freitext, max. 8 Zeichen");
+        tipFmt.SetToolTip(tbFormat, L.T("settings.format_tip"));
 
         // ── Per-project ignore ─────────────────────────────────────────────────
         new Label {
             Parent = grp, Left = 8, Top = 187, Width = 556, Height = 14,
-            Text = "Per-project ignore  (prefix ! to re-include a global entry)",
+            Text = L.T("settings.per_project_ignore"),
             Font = new Font("Segoe UI", 7.5F, FontStyle.Italic),
             ForeColor = Color.FromArgb(140, 140, 145),
         };
         var tipIgnore = new ToolTip();
-        tipIgnore.SetToolTip(GrpLbl("Ignore dirs:",  203, 104), "One entry per line.\nPrefix ! to re-include a global entry, e.g. !bin");
+        tipIgnore.SetToolTip(GrpLbl(L.T("settings.ignore_dirs"),  203, 104), L.T("settings.ignore_dirs_tip"));
         var tbIgnoreDirs  = new TextBox { Parent = grp, Left = 116, Top = 201, Width = 440, Height = 38, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical };
-        tipIgnore.SetToolTip(tbIgnoreDirs, "One entry per line.\nPrefix ! to re-include a global entry, e.g. !bin");
-        tipIgnore.SetToolTip(GrpLbl("Ignore files:", 247, 104), "One pattern per line (e.g. *.bak).\nPrefix ! to re-include a global pattern.");
+        tipIgnore.SetToolTip(tbIgnoreDirs, L.T("settings.ignore_dirs_tip"));
+        tipIgnore.SetToolTip(GrpLbl(L.T("settings.ignore_files"), 247, 104), L.T("settings.ignore_files_tip"));
         var tbIgnoreFiles = new TextBox { Parent = grp, Left = 116, Top = 245, Width = 440, Height = 38, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical };
-        tipIgnore.SetToolTip(tbIgnoreFiles, "One pattern per line (e.g. *.bak).\nPrefix ! to re-include a global pattern.");
+        tipIgnore.SetToolTip(tbIgnoreFiles, L.T("settings.ignore_files_tip"));
 
         // ── Git hook ──────────────────────────────────────────────────────────
         var btnHook = new Button {
             Parent = grp, Left = 96, Top = 295, Width = 220, Height = 26,
             FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI,
-            Text = "Git-Hook installieren",
+            Text = L.T("hook.install"),
         };
         var lblHookInfo = new Label {
             Parent = grp, Left = 326, Top = 298, Width = 226, Height = 20,
             Font = new Font("Segoe UI", 8F), ForeColor = Color.FromArgb(130, 130, 135),
-            Text = "pre-commit hook für dieses Repo",
+            Text = L.T("hook.label"),
         };
         // ── Save / Cancel ─────────────────────────────────────────────────────
         var btnSave   = new Button { Parent = dlg, Text = L.T("btn.save"),   Left = 396, Top = 675, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
@@ -1975,7 +1970,7 @@ class ThemedColorTable : ProfessionalColorTable {
         string DisplayName(ProjectEntry e) {
             if (!string.IsNullOrWhiteSpace(e.Name)) return e.Name;
             string n = Path.GetFileName(e.Path.Trim().TrimEnd('\\', '/'));
-            return string.IsNullOrWhiteSpace(n) ? "(new)" : n;
+            return string.IsNullOrWhiteSpace(n) ? L.T("project.new") : n;
         }
 
         void UpdateListButtons() {
@@ -2001,14 +1996,14 @@ class ThemedColorTable : ProfessionalColorTable {
             if (string.IsNullOrWhiteSpace(clean)) { lblStatus.Text = ""; return; }
             if (!Directory.Exists(clean)) {
                 lblStatus.ForeColor = Color.Salmon;
-                lblStatus.Text = "⚠  Directory not found"; return;
+                lblStatus.Text = L.T("status.dir_not_found"); return;
             }
             if (!File.Exists(Path.Combine(clean, "VERSION"))) {
                 lblStatus.ForeColor = Color.FromArgb(255, 180, 0);
-                lblStatus.Text = "⚠  No VERSION file in this directory"; return;
+                lblStatus.Text = L.T("status.no_version_file"); return;
             }
             lblStatus.ForeColor = Color.FromArgb(80, 200, 80);
-            lblStatus.Text = "✓  OK";
+            lblStatus.Text = L.T("status.ok_short");
         }
 
         void LoadEntry(int idx) {
@@ -2026,7 +2021,7 @@ class ThemedColorTable : ProfessionalColorTable {
             string dir = e.Path.Trim('"');
             bool hasGit = Directory.Exists(Path.Combine(dir, ".git"));
             btnHook.Enabled = hasGit;
-            btnHook.Text    = hasGit && HasGitHook(dir) ? "Git-Hook entfernen" : "Git-Hook installieren";
+            btnHook.Text    = hasGit && HasGitHook(dir) ? L.T("hook.remove") : L.T("hook.install");
             ValidatePath();
             loading = false;
         }
@@ -2084,7 +2079,7 @@ class ThemedColorTable : ProfessionalColorTable {
                 lblPreview.Text      = "→ " + preview;
                 lblPreview.ForeColor = Color.FromArgb(100, 170, 100);
             } catch {
-                lblPreview.Text      = "⚠ Ungültiger Format-String";
+                lblPreview.Text      = L.T("settings.format_invalid");
                 lblPreview.ForeColor = Color.FromArgb(200, 80, 80);
             }
         };
@@ -2093,14 +2088,14 @@ class ThemedColorTable : ProfessionalColorTable {
             string dir = entries[current].Path.Trim('"');
             if (!Directory.Exists(dir)) return;
             try {
-                if (HasGitHook(dir)) { RemoveGitHook(dir); btnHook.Text = "Git-Hook installieren"; }
-                else                  { InstallGitHook(dir); btnHook.Text = "Git-Hook entfernen"; }
+                if (HasGitHook(dir)) { RemoveGitHook(dir); btnHook.Text = L.T("hook.install"); }
+                else                  { InstallGitHook(dir); btnHook.Text = L.T("hook.remove"); }
             } catch (Exception ex) { MessageBox.Show(ex.Message, "VerBump"); }
         };
         cbBackup.CheckedChanged += (s, e) => { if (!loading) Flush(); };
 
         btnBrowsePath.Click += (s, e) => {
-            using var fbd = new FolderBrowserDialog { Description = "Select project folder", UseDescriptionForTitle = true };
+            using var fbd = new FolderBrowserDialog { Description = L.T("settings.select_project_folder"), UseDescriptionForTitle = true };
             if (!string.IsNullOrWhiteSpace(tbPath.Text))
                 try { fbd.SelectedPath = tbPath.Text.Trim(); } catch (Exception ex) { Log.Write("Settings/browsePath", ex); }
             if (fbd.ShowDialog(dlg) == DialogResult.OK) {
@@ -2109,7 +2104,7 @@ class ThemedColorTable : ProfessionalColorTable {
         };
 
         btnBrowseIcon.Click += (s, e) => {
-            using var ofd = new System.Windows.Forms.OpenFileDialog { Title = "Select icon", Filter = "Icons & Images|*.ico;*.png;*.jpg;*.bmp|All files|*.*" };
+            using var ofd = new System.Windows.Forms.OpenFileDialog { Title = L.T("settings.select_icon"), Filter = L.T("settings.icon_filter") };
             if (!string.IsNullOrWhiteSpace(tbIcon.Text))
                 try { ofd.InitialDirectory = Path.GetDirectoryName(Environment.ExpandEnvironmentVariables(tbIcon.Text)); } catch (Exception ex) { Log.Write("Settings/browseIcon", ex); }
             if (ofd.ShowDialog(dlg) == DialogResult.OK) { tbIcon.Text = ofd.FileName; Flush(); }
@@ -2312,7 +2307,7 @@ class ThemedColorTable : ProfessionalColorTable {
         string current;
         try { current = File.ReadAllText(versionFile).Trim(); }
         catch (Exception ex) {
-            MessageBox.Show($"VerBump: Kann VERSION-Datei nicht lesen:\n{ex.Message}", "VerBump", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(L.T("error.read_version_file", ex.Message), "VerBump", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
 
@@ -2322,7 +2317,7 @@ class ThemedColorTable : ProfessionalColorTable {
             if (entry.Backup) File.Copy(versionFile, versionFile + ".bak", true);
             File.WriteAllText(versionFile, next);
         } catch (Exception ex) {
-            MessageBox.Show($"VerBump: Kann VERSION-Datei nicht schreiben:\n{ex.Message}", "VerBump", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(L.T("error.write_version_file", ex.Message), "VerBump", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
 
@@ -2348,12 +2343,12 @@ class ThemedColorTable : ProfessionalColorTable {
         new Label {
             Parent = toast, Left = 12, Top = 8, Width = 296, Height = 18, ForeColor = colFg,
             Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-            Text = $"VerBump {latest} verfügbar",
+            Text = L.T("update.available", latest),
         };
         var lnk = new LinkLabel {
             Parent = toast, Left = 12, Top = 32, Width = 200, Height = 18,
             Font = new Font("Segoe UI", 8.5F), ForeColor = colDim, LinkColor = Color.FromArgb(100, 210, 255),
-            Text = "Zum Download →",
+            Text = L.T("update.download"),
         };
         lnk.LinkClicked += (s, e) => {
             try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
@@ -2449,7 +2444,7 @@ class ThemedColorTable : ProfessionalColorTable {
             AutoSize = false,
         };
         new Label {
-            Parent = dlg, Text = $"Version {version}", Left = 106, Top = 56,
+            Parent = dlg, Text = L.T("info.version", version), Left = 106, Top = 56,
             Width = 200, Height = 18, Font = fUI, ForeColor = accent,
         };
         new Label {
@@ -2492,7 +2487,7 @@ class ThemedColorTable : ProfessionalColorTable {
 
         // ── Close button ──────────────────────────────────────────────────────
         var btnClose = new Button {
-            Parent = dlg, Text = "OK", Left = 244, Top = 170, Width = 74, Height = 28,
+            Parent = dlg, Text = L.T("btn.ok"), Left = 244, Top = 170, Width = 74, Height = 28,
             FlatStyle = FlatStyle.Flat, BackColor = Theme.BgLight,
             ForeColor = fgW, Font = fUI, DialogResult = DialogResult.OK,
         };
