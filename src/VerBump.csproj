@@ -14,18 +14,40 @@
     <EmbeddedResource Include="VERSION" />
     <EmbeddedResource Include="Phosphor.ttf" />
     <EmbeddedResource Include="Phosphor-Bold.ttf" />
-    <EmbeddedResource Include="lang.de.json" />
-    <EmbeddedResource Include="lang.en.json" />
+    <EmbeddedResource Include="lang.de.json">
+      <WithCulture>false</WithCulture>
+      <Culture></Culture>
+      <LogicalName>VerBump.lang_de.json</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="lang.en.json">
+      <WithCulture>false</WithCulture>
+      <Culture></Culture>
+      <LogicalName>VerBump.lang_en.json</LogicalName>
+    </EmbeddedResource>
     <Content Include="verbump.ico">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <!-- Auch als externe Dateien kopieren: ermöglicht Custom-Übersetzungen neben der EXE -->
     <Content Include="lang.de.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </Content>
     <Content Include="lang.en.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
+
+  <Target Name="CopyLangSatelliteAssembliesToPublish" AfterTargets="Publish">
+    <MakeDir Directories="$(PublishDir)de;$(PublishDir)en" />
+    <Copy SourceFiles="$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\de\VerBump.resources.dll"
+          DestinationFiles="$(PublishDir)de\VerBump.resources.dll"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\de\VerBump.resources.dll')" />
+    <Copy SourceFiles="$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\en\VerBump.resources.dll"
+          DestinationFiles="$(PublishDir)en\VerBump.resources.dll"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\en\VerBump.resources.dll')" />
+  </Target>
 
 </Project>

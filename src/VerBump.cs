@@ -299,18 +299,49 @@ public class FormatScheme : IVersionScheme {
     }
 
     string[] ParseVersion(string version) {
+        version ??= "";
         var values = _interactive.Select(ctx => DefaultValue(ctx.Token)).ToArray();
         try {
             var m = System.Text.RegularExpressions.Regex.Match(version, BuildPattern(),
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            if (m.Success)
+            if (m.Success) {
                 for (int i = 0; i < _interactive.Count; i++) {
                     var g = m.Groups[$"g{i}"];
                     if (g.Success) values[i] = g.Value;
                 }
+                return values;
+            }
         } catch { }
+
+        var srcNums = System.Text.RegularExpressions.Regex.Matches(version, @"\d+")
+            .Select(m => m.Value).ToArray();
+        int numIdx = 0;
+        for (int i = 0; i < _interactive.Count; i++) {
+            switch (_interactive[i].Token) {
+                case NumericToken:
+                    if (numIdx < srcNums.Length) values[i] = srcNums[numIdx++];
+                    break;
+                case InlineListToken il:
+                    values[i] = GuessListValue(il.Values, version, values[i]);
+                    break;
+                case NamedListToken nl:
+                    values[i] = GuessListValue(Resolve(nl), version, values[i]);
+                    break;
+            }
+        }
         return values;
     }
+
+    static string GuessListValue(string[] values, string version, string fallback) {
+        if (values == null || values.Length == 0) return fallback;
+        string match = values
+            .Where(v => !string.IsNullOrEmpty(v))
+            .OrderByDescending(v => v.Length)
+            .FirstOrDefault(v => version.IndexOf(v, StringComparison.OrdinalIgnoreCase) >= 0);
+        if (match != null) return match;
+        return values.Any(v => v == "") ? "" : fallback;
+    }
+
 
     string Render(string[] values) {
         var sb = new System.Text.StringBuilder();
@@ -491,11 +522,28 @@ public static class L {
         }
         // 2. Embedded Resource (immer verfügbar, egal wie die EXE aufgerufen wird)
         string FindEmbedded(string l) {
+            const string ResourcePrefix = "VerBump.lang_";
+            const string ResourceSuffix = ".json";
+
+            static string ReadResource(System.Reflection.Assembly sourceAsm, string resourceName) {
+                using var stream = sourceAsm.GetManifestResourceStream(resourceName);
+                if (stream == null) return null;
+                using var reader = new System.IO.StreamReader(stream, System.Text.Encoding.UTF8);
+                return reader.ReadToEnd();
+            }
+
             var asm = System.Reflection.Assembly.GetExecutingAssembly();
-            using var stream = asm.GetManifestResourceStream($"VerBump.lang.{l}.json");
-            if (stream == null) return null;
-            using var reader = new System.IO.StreamReader(stream, System.Text.Encoding.UTF8);
-            return reader.ReadToEnd();
+            string resourceName = $"{ResourcePrefix}{l}{ResourceSuffix}";
+
+            string json = ReadResource(asm, resourceName);
+            if (json != null) return json;
+
+            try {
+                var satellite = asm.GetSatelliteAssembly(new System.Globalization.CultureInfo(l));
+                return ReadResource(satellite, resourceName);
+            } catch {
+                return null;
+            }
         }
         string json = FindFile(lang);
         if (json == null) { json = FindFile("en");      if (json != null) lang = "en"; }
@@ -782,11 +830,41 @@ class ThemedColorTable : ProfessionalColorTable {
         } else if (OverrideSettingsPath != null) {
             formTitle = $"VerBump  v{appVersion}  —  {Path.GetFileName(OverrideSettingsPath)}";
         }
+        int MeasureRowWidth(ProjectEntry entry) {
+            IVersionScheme measureScheme = SchemeFactory.Create(entry, settings.Lists);
+            var labels = measureScheme.GetButtonLabels();
+            using var btnFont = new Font("Segoe UI", 8F);
+            int buttonsWidth = 5;
+            foreach (var label in labels) {
+                if (label == null) continue;
+                int btnWidth = Math.Max(50, TextRenderer.MeasureText(label + "+", btnFont).Width + 16);
+                buttonsWidth += btnWidth + 6;
+            }
+            return 42 + 22 + 172 + 120 + buttonsWidth + 24;
+        }
+
+        int requestedRowWidth = 680;
+        foreach (var entry in willHaveUnsavedEntry ? [] : settings.Paths) {
+            string cleanPath = entry.Path.Trim().TrimEnd(Path.DirectorySeparatorChar, '/');
+            string vFile = Path.Combine(cleanPath, "VERSION");
+            if (!File.Exists(vFile)) continue;
+            requestedRowWidth = Math.Max(requestedRowWidth, MeasureRowWidth(entry));
+        }
+        if (willHaveUnsavedEntry) foreach (string versionPath in InitialVersionPaths) {
+            if (!File.Exists(versionPath)) continue;
+            string target = Path.GetFullPath(versionPath);
+            string cleanPath = Path.GetDirectoryName(target);
+            requestedRowWidth = Math.Max(requestedRowWidth, MeasureRowWidth(new ProjectEntry { Path = cleanPath, Scheme = "semver", ResetOnBump = true }));
+        }
+        int requestedContentWidth = requestedRowWidth;
+        var workingArea = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 900);
+        int maxFormWidth = Math.Max(720, workingArea.Width - 40);
+        int requestedFormWidth = Math.Min(Math.Max(720, requestedContentWidth + 40), maxFormWidth);
         if (CheckMode && singleVersionPath != null)
             formTitle = $"VerBump — Git Hook — {Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(singleVersionPath))) ?? "?"}";
         using var form = new Form {
             Text = formTitle,
-            Width = 720, Height = 80 + (willHaveUnsavedEntry ? InitialVersionPaths.Count : settings.Paths.Count) * 55 + 138,
+            Width = requestedFormWidth, Height = 80 + (willHaveUnsavedEntry ? InitialVersionPaths.Count : settings.Paths.Count) * 55 + 138,
             StartPosition = FormStartPosition.CenterScreen,
             KeyPreview = true,
             BackColor = bgMid, ForeColor = fgW
@@ -840,6 +918,7 @@ class ThemedColorTable : ProfessionalColorTable {
         };
 
         var mainPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(10), BackColor = bgDark, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        mainPanel.AutoScrollMinSize = new Size(requestedContentWidth + 20, 0);
         var uiEntries = new List<ProjectUI>();
         int selectedIndex = 0;
         Action updateSelection = null;
@@ -900,10 +979,11 @@ class ThemedColorTable : ProfessionalColorTable {
         var ctxExplore       = new ToolStripMenuItem("Ordner im Explorer öffnen") { ForeColor = fgW };
         var ctxAddVersionFav = new ToolStripMenuItem(L.T("menu.add_version_fav")) { ForeColor = Color.FromArgb(255, 200, 60) };
         var ctxAddToSettings = new ToolStripMenuItem(L.T("toolbar.add_project")) { ForeColor = fgW };
+        var ctxBottomSep    = new ToolStripSeparator();
         rowCtx.Items.Add(ctxEdit);
         rowCtx.Items.Add(ctxExplore);
         rowCtx.Items.Add(ctxAddVersionFav);
-        rowCtx.Items.Add(new ToolStripSeparator());
+        rowCtx.Items.Add(ctxBottomSep);
         rowCtx.Items.Add(ctxAddToSettings);
         rowCtx.BackColor           = bgMid;
         ctxEdit.BackColor          = bgMid;
@@ -928,6 +1008,7 @@ class ThemedColorTable : ProfessionalColorTable {
             } else {
                 ctxAddVersionFav.Visible = false;
             }
+            ctxBottomSep.Visible = ctxAddToSettings.Visible;
         };
         ctxEdit.Click += (s, e) => {
             if (ctxTargetIndex < 0 || ctxTargetIndex >= uiEntries.Count) return;
@@ -1033,6 +1114,8 @@ class ThemedColorTable : ProfessionalColorTable {
             }
         };
 
+        var toolTip = new ToolTip { AutoPopDelay = 20000, InitialDelay = 300, ReshowDelay = 200 };
+
         foreach (var entry in willHaveUnsavedEntry ? [] : settings.Paths) {
             string cleanPath = entry.Path.Trim().TrimEnd(Path.DirectorySeparatorChar, '/');
             string vFile = Path.Combine(cleanPath, "VERSION");
@@ -1064,8 +1147,8 @@ class ThemedColorTable : ProfessionalColorTable {
                 } catch (Exception ex) { Log.Write($"Run/projectIcon/{entry.Icon}", ex); }
             }
 
-            var selectionPanel = new Panel { Width = 680, Height = 50, Margin = new Padding(0, 3, 0, 3), BackColor = Color.Transparent };
-            var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 1, Padding = new Padding(3) };
+            var selectionPanel = new Panel { Width = requestedRowWidth, Height = 50, Margin = new Padding(0, 3, 0, 3), BackColor = Color.Transparent };
+            var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 1, Padding = new Padding(14, 3, 3, 3) };
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 42F));   // Icon
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 22F));   // Hotkey
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172F));  // Name
@@ -1084,6 +1167,7 @@ class ThemedColorTable : ProfessionalColorTable {
                 TextAlign = ContentAlignment.MiddleCenter,
             };
             var lbl = new Label { Text = projectName, Width = 172, Height = 44, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
+            toolTip.SetToolTip(lbl, vFile);
 
             var tb = new TextBox {
                 Text = currentV,
@@ -1106,7 +1190,7 @@ class ThemedColorTable : ProfessionalColorTable {
             };
             AttachVersionHints(tb, scheme);
 
-            var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5, 5, 0, 0) };
+            var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(5, 5, 0, 0) };
             var labels = scheme.GetButtonLabels();
             for (int i = 0; i < labels.Count; i++) {
                 if (labels[i] == null) continue;
@@ -1172,7 +1256,7 @@ class ThemedColorTable : ProfessionalColorTable {
         }
 
         // ── Unsaved entries: VERSION paths passed via CLI (unsaved mode) ──────────
-        foreach (string versionPath in InitialVersionPaths) {
+        if (willHaveUnsavedEntry) foreach (string versionPath in InitialVersionPaths) {
             if (!File.Exists(versionPath)) continue;
             string target      = Path.GetFullPath(versionPath);
             string cleanPath   = Path.GetDirectoryName(target);
@@ -1181,8 +1265,8 @@ class ThemedColorTable : ProfessionalColorTable {
             var entry  = new ProjectEntry { Path = cleanPath, Scheme = "semver", ResetOnBump = true };
             IVersionScheme scheme = SchemeFactory.Create(entry, settings.Lists);
 
-            var selectionPanel = new Panel { Width = 680, Height = 50, Margin = new Padding(0, 3, 0, 3), BackColor = Color.Transparent };
-            var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 1, Padding = new Padding(3) };
+            var selectionPanel = new Panel { Width = requestedRowWidth, Height = 50, Margin = new Padding(0, 3, 0, 3), BackColor = Color.Transparent };
+            var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 1, Padding = new Padding(14, 3, 3, 3) };
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 42F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 22F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172F));
@@ -1197,6 +1281,7 @@ class ThemedColorTable : ProfessionalColorTable {
                 TextAlign = ContentAlignment.MiddleCenter };
             var lbl = new Label { Text = projectName, Width = 172, Height = 44,
                 Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
+            toolTip.SetToolTip(lbl, target);
             var tb = new TextBox { Text = currentV, Width = 110, Height = 23, Margin = new Padding(0, 10, 0, 0),
                 BackColor = bgLight, ForeColor = fgW,
                 BorderStyle = BorderStyle.FixedSingle, Font = new Font("Consolas", 10F) };
@@ -1211,7 +1296,7 @@ class ThemedColorTable : ProfessionalColorTable {
                 tb.BackColor = scheme.Matches(tb.Text.Trim()) ? bgLight : Color.FromArgb(110, 50, 0);
             };
             AttachVersionHints(tb, scheme);
-            var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(5, 5, 0, 0) };
+            var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(5, 5, 0, 0) };
             var labels = scheme.GetButtonLabels();
             for (int i = 0; i < labels.Count; i++) {
                 if (labels[i] == null) continue;
@@ -1292,7 +1377,6 @@ class ThemedColorTable : ProfessionalColorTable {
             return;
         }
 
-        var toolTip = new ToolTip { AutoPopDelay = 20000, InitialDelay = 300, ReshowDelay = 200 };
 
         var bottomPanel = new Panel { Dock = DockStyle.Bottom, Height = 65, BackColor = bgMid };
         bottomPanel.Controls.Add(btnOk);
@@ -2533,3 +2617,14 @@ class ThemedColorTable : ProfessionalColorTable {
         } catch (Exception ex) { Log.Write($"CollectNewerFiles/{dir}", ex); }
     }
 }
+
+
+
+
+
+
+
+
+
+
+

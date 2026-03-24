@@ -29,7 +29,17 @@
       "Bash(start \"\" \"C:\\\\Git\\\\VerBump\\\\src\\\\bin\\\\Release\\\\net8.0-windows\\\\win-x64\\\\publish\\\\VerBump.exe\" \"C:\\\\Git\\\\VerBump\")",
       "Bash(start \"\" \"C:\\\\Git\\\\VerBump\\\\src\\\\bin\\\\Release\\\\net8.0-windows\\\\win-x64\\\\publish\\\\VerBump.exe\" \"C:\\\\Git\\\\VerBump\\\\src\\\\VERSION\")",
       "Bash(/c/Git/VerBump/src/bin/Release/net8.0-windows/win-x64/publish/VerBump.exe \"C:/Git/VerBump/src/VERSION\")",
-      "Bash(grep -v \"//\")"
+      "Bash(grep -v \"//\")",
+      "Read(//c/Users/mb/AppData/Roaming/VerBump/**)",
+      "Bash(dotnet --version)",
+      "Bash(dotnet tool:*)",
+      "Read(//c/tmp/**)",
+      "Bash(ListResources.cs:*)",
+      "Bash(dotnet script:*)",
+      "Bash(grep -v \"^$\")",
+      "Bash(dotnet restore:*)",
+      "Read(//tmp/**)",
+      "Read(//c/Program Files/dotnet/sdk/10.0.201/**)"
     ],
     "additionalDirectories": [
       "c:\\Git\\VerBump",
