@@ -265,8 +265,9 @@
         <div class="box has-text-centered">
           <span class="feature-icon">🔍</span>
           <h3 class="title is-5">Staleness detection</h3>
-          <p>Automatically scans your project directories and highlights projects
-             where source files are newer than the current VERSION.</p>
+          <p>Automatically scans your project directories and marks projects where source
+             files are newer than VERSION. For git repos, uses the last commit date as reference to avoid
+             false positives from file timestamps.</p>
         </div>
       </div>
 
@@ -293,8 +294,8 @@
         <div class="box has-text-centered">
           <span class="feature-icon">📦</span>
           <h3 class="title is-5">Zero dependencies</h3>
-          <p>A single self-contained <code>.exe</code> — no .NET runtime installation,
-             no registry entries, no installer required.</p>
+          <p>A single self-contained <code>.exe</code> — choose portable (no install, no registry) or
+             installer-based deployment (with Explorer integration and service scripts).</p>
         </div>
       </div>
 
@@ -442,9 +443,9 @@
         <code>VERSION</code>, the commit is blocked and VerBump opens automatically so you can
         bump before anything goes out.
       </p>
-      <p><strong>Setup:</strong> open Settings, select a project, click <strong>Git-Hook installieren</strong>.
+      <p><strong>Setup:</strong> open Settings, select a project, click <strong>Install Git Hook</strong>.
          VerBump writes a small script into <code>.git/hooks/pre-commit</code> — existing hook content
-         is preserved. Remove it the same way with <strong>Git-Hook entfernen</strong>.</p>
+         is preserved. Remove it the same way with <strong>Remove Git Hook</strong>.</p>
       <p>The hook calls VerBump with <code>--check</code>. You can also invoke it manually:</p>
       <pre><code>VerBump.exe --check          # check project in current directory
 VerBump.exe --check C:\my\project</code></pre>
@@ -501,8 +502,9 @@ VerBump.exe --check C:\my\project</code></pre>
     <div class="content">
       <h3>Ignore rules</h3>
       <p>
-        VerBump scans project directories to detect files newer than the current VERSION.
-        You can exclude directories and file patterns globally or per project.
+        VerBump scans project directories to detect stale versions: if source files are newer than VERSION,
+        or (for git repos) if files changed since the last commit, the project is marked as stale.
+        You can exclude directories and file patterns globally or per project to fine-tune this detection.
       </p>
       <p><strong>Global ignore</strong> — set in the Settings dialog, applies to all projects:</p>
       <pre><code>Dirs:  .git  node_modules  bin  obj  dist

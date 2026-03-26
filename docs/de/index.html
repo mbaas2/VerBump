@@ -244,8 +244,9 @@
         <div class="box has-text-centered">
           <span class="feature-icon">🔍</span>
           <h3 class="title is-5">Aktualitätsprüfung</h3>
-          <p>Scannt Projektverzeichnisse automatisch und markiert Projekte,
-             bei denen Quelldateien neuer als die aktuelle VERSION sind.</p>
+          <p>Scannt Projektverzeichnisse automatisch und markiert Projekte, bei denen Quelldateien
+             neuer als die VERSION sind. Bei Git-Repos wird das Datum des letzten Commits als Bezug genutzt,
+             um falsche Alarme durch Datei-Timestamps zu vermeiden.</p>
         </div>
       </div>
 
@@ -272,8 +273,8 @@
         <div class="box has-text-centered">
           <span class="feature-icon">📦</span>
           <h3 class="title is-5">Keine Abhängigkeiten</h3>
-          <p>Eine einzige, eigenständige <code>.exe</code> — keine .NET-Installation,
-             keine Registry-Einträge, kein Installer erforderlich.</p>
+          <p>Eine einzige, eigenständige <code>.exe</code> — wähle zwischen portabel (keine Installation, keine Registry) oder
+             Installer-Installation (mit Explorer-Integration und Service-Skripten).</p>
         </div>
       </div>
 
@@ -484,8 +485,10 @@ VerBump.exe --check C:\mein\Projekt</code></pre>
     <div class="content">
       <h3>Ignore-Regeln</h3>
       <p>
-        VerBump scannt Projektverzeichnisse auf Dateien, die neuer als die aktuelle VERSION sind.
-        Verzeichnisse und Dateimuster können global oder pro Projekt ausgeschlossen werden.
+        VerBump markiert Projekte als veraltet, wenn Quelldateien neuer als die VERSION sind,
+        oder (bei Git-Repos) wenn sich Dateien seit dem letzten Commit geändert haben.
+        Verzeichnisse und Dateimuster können global oder pro Projekt ausgeschlossen werden,
+        um diese Erkennung präzise anzupassen.
       </p>
       <p><strong>Global ignore</strong> — in den Einstellungen, gilt für alle Projekte:</p>
       <pre><code>Dirs:  .git  node_modules  bin  obj  dist
@@ -538,8 +541,7 @@ Files: *.bak  *.tmp  *.log</code></pre>
       </a>
     </p>
     <p class="footer-note">
-      Entwickelt in Zusammenarbeit mit <a href="https://claude.ai" target="_blank" rel="noopener">Claude</a> (Anthropic) —
-      der Beweis, dass man eine Sprache nicht beherrschen muss, um ein Tool darin zu bauen.
+      Open Source · MIT-Lizenz · <a href="https://github.com/mbaas2/VerBump">Quellcode auf GitHub</a>
     </p>
   </div>
 </footer>
