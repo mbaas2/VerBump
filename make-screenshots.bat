@@ -26,5 +26,11 @@ echo Taking EN screenshots...
 echo Taking DE screenshots...
 "%EXE%" C:\devt\VerBump\doc\settings.json --lang=de --settings="%DEMO%" --screenshot="%OUT%" --screenshot-entry=%ENTRY% --screenshot-row=%ROW% --screenshot-help
 
-echo Done. Files written to %OUT%\
+for /f "delims=" %%F in ('dir /b /o-d "%OUT%\main-en-*.png" 2^>nul') do (
+    copy /y "%OUT%\%%F" "%OUT%\main-en.png" >nul
+    goto :main_en_done
+)
+:main_en_done
+echo Done. Files written to %OUT%\\
 dir "%OUT%\*.png" /b
+

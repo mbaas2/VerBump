@@ -16,7 +16,7 @@ of all your repos at a glance.
 
 ## Features
 
-- **Staleness detection** — highlights projects where source files are newer than the current VERSION
+- **Staleness detection** — highlights projects where source files are newer than the current VERSION or were updated after last commit
 - **Keyboard-driven** — jump to any project with Alt+A–Z, bump with Ctrl+1–4
 - **Multiple schemes** — SemVer, CalVer, and custom sequential schemes
 - **Flexible ignore rules** — global + per-project, with `!`-prefix exclusion
