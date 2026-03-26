@@ -5,8 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>VerBump — Version File Manager</title>
   <link rel="icon" type="image/png" href="verbump.png" />
-  <link rel="alternate" hreflang="de" href="/VerBump/de/" />
-  <link rel="alternate" hreflang="en" href="/VerBump/" />
+  <link rel="alternate" hreflang="de"        href="https://mbaas2.github.io/VerBump/de/" />
+  <link rel="alternate" hreflang="en"        href="https://mbaas2.github.io/VerBump/" />
+  <link rel="alternate" hreflang="x-default" href="https://mbaas2.github.io/VerBump/" />
+  <meta property="og:type"        content="website" />
+  <meta property="og:url"         content="https://mbaas2.github.io/VerBump/" />
+  <meta property="og:title"       content="VerBump — Version File Manager" />
+  <meta property="og:description" content="Version file manager for Windows developers. Keep all your projects' VERSION files in one place. Bump major, minor, or patch with a single keystroke." />
+  <meta property="og:image"       content="https://mbaas2.github.io/VerBump/screenshots/main-en.png" />
+  <script defer src="https://cloud.umami.is/script.js" data-website-id="a2239e4b-6313-497f-9737-27bfc282a029"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css" />
   <style>
     :root { color-scheme: light dark; }
@@ -214,13 +221,13 @@
     <div class="columns is-centered is-vcentered">
       <div class="column is-6 has-text-centered">
         <figure class="image screenshot-frame">
-          <img src="screenshots/main-en.png" alt="VerBump main window — orange rows indicate stale VERSION" />
+          <img data-screenshot="main-en" alt="VerBump main window — orange rows indicate stale VERSION" />
         </figure>
         <p class="screenshot-caption has-text-grey">Main window — orange = VERSION not yet bumped</p>
       </div>
       <div class="column is-5 has-text-centered">
         <figure class="image screenshot-frame">
-          <img src="screenshots/settings-en.png" alt="VerBump Settings dialog" />
+          <img data-screenshot="settings-en" alt="VerBump Settings dialog" />
         </figure>
         <p class="screenshot-caption has-text-grey">Settings dialog with Git hook integration</p>
       </div>
@@ -519,6 +526,19 @@ Files: *.bak  *.tmp  *.log</code></pre>
 </section>
 
 <!-- ══ FOOTER ══════════════════════════════════════════════════════════════ -->
+<section class="section pt-4 pb-5">
+  <div class="container content" style="max-width:760px">
+    <h3 class="title is-5">Contact &amp; Support</h3>
+    <p>
+      Found a bug or have a feature request?
+      <a href="https://github.com/mbaas2/VerBump/issues" target="_blank" rel="noopener">Open an issue</a>
+      or contact me directly at
+      <a href="mailto:verbump@mbaas.de">verbump@mbaas.de</a> —
+      I'm available for questions, feedback, and the occasional VerBump war story.
+    </p>
+  </div>
+</section>
+
 <footer class="footer">
   <div class="content has-text-centered">
     <p>
@@ -540,6 +560,14 @@ Files: *.bak  *.tmp  *.log</code></pre>
   </div>
 </footer>
 
+<script src="screenshots/current.js"></script>
+<script>
+  if (typeof VERBUMP_VERSION !== 'undefined') {
+    document.querySelectorAll('img[data-screenshot]').forEach(function(img) {
+      img.src = 'screenshots/' + img.dataset.screenshot + '-' + VERBUMP_VERSION + '.png';
+    });
+  }
+</script>
 <script>
   if (!sessionStorage.getItem('lang-chosen') &&
       (navigator.language || '').toLowerCase().startsWith('de')) {

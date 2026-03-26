@@ -9,12 +9,16 @@
     <AssemblyName>VerBump</AssemblyName>
     <RootNamespace>VerBump</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="VerBump.DemoRunner\**" />
+    <EmbeddedResource Remove="VerBump.DemoRunner\**" />
+    <Content Remove="VerBump.DemoRunner\**" />
+    <None Remove="VerBump.DemoRunner\**" />
+  </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="VERSION" />
-    <EmbeddedResource Include="Phosphor.ttf" />
-    <EmbeddedResource Include="Phosphor-Bold.ttf" />
-    <EmbeddedResource Include="lang.de.json">
+<EmbeddedResource Include="lang.de.json">
       <WithCulture>false</WithCulture>
       <Culture></Culture>
       <LogicalName>VerBump.lang_de.json</LogicalName>
@@ -51,3 +55,4 @@
   </Target>
 
 </Project>
+

@@ -3,3 +3,4 @@ src/obj/
 *.user
 .DS_Store
 Thumbs.db
+.claude/

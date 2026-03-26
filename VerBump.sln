@@ -6,6 +6,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VerBump", "src\VerBump.csproj", "{DA114846-62C8-EE34-7020-B02518012719}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VerBump.DemoRunner", "src\VerBump.DemoRunner\VerBump.DemoRunner.csproj", "{7EEAEA78-3EE4-4C42-8EE2-60078BD16F46}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -16,14 +18,20 @@ Global
 		{DA114846-62C8-EE34-7020-B02518012719}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{DA114846-62C8-EE34-7020-B02518012719}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{DA114846-62C8-EE34-7020-B02518012719}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7EEAEA78-3EE4-4C42-8EE2-60078BD16F46}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7EEAEA78-3EE4-4C42-8EE2-60078BD16F46}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7EEAEA78-3EE4-4C42-8EE2-60078BD16F46}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7EEAEA78-3EE4-4C42-8EE2-60078BD16F46}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{DA114846-62C8-EE34-7020-B02518012719} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{7EEAEA78-3EE4-4C42-8EE2-60078BD16F46} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {B32D2428-565F-4E29-8548-3125F3BF2535}
 	EndGlobalSection
 EndGlobal
+

@@ -1,0 +1,31 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "VerBump.DemoRunner/1.0.0": {
+        "runtime": {
+          "VerBump.DemoRunner.dll": {}
+        },
+        "resources": {
+          "de/VerBump.DemoRunner.resources.dll": {
+            "locale": "de"
+          },
+          "en/VerBump.DemoRunner.resources.dll": {
+            "locale": "en"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "VerBump.DemoRunner/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

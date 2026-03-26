@@ -6,7 +6,6 @@ using System.Windows.Forms;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Linq;
-using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.Win32;
@@ -209,7 +208,7 @@ public class FormatScheme : IVersionScheme {
         _interactive.Select(ctx => ctx.Token switch {
             NumericToken n     => n.Name,
             InlineListToken il => string.Join("|", il.Values),
-            NamedListToken nl  => string.Join("|", Resolve(nl)),
+            NamedListToken nl  => nl.ListName,           // show list name, not all values
             _                  => null
         }).ToList();
 
@@ -257,10 +256,14 @@ public class FormatScheme : IVersionScheme {
                     pat.Append($@"\d{{{dlen}}}"); break;
                 case NumericToken:
                     pat.Append($@"(?<g{ai}>\d+)"); break;
-                case InlineListToken il:
-                    pat.Append($"(?<g{ai}>{string.Join("|", il.Values.Select(System.Text.RegularExpressions.Regex.Escape))})"); break;
-                case NamedListToken nl:
-                    pat.Append($"(?<g{ai}>{string.Join("|", Resolve(nl).Select(System.Text.RegularExpressions.Regex.Escape))})"); break;
+                case InlineListToken il: {
+                    var alts = string.Join("|", il.Values.Where(v => v.Length > 0).Select(System.Text.RegularExpressions.Regex.Escape));
+                    pat.Append($"(?<g{ai}>{alts}|)"); break;   // always optional: existing files may lack a stage
+                }
+                case NamedListToken nl: {
+                    var alts = string.Join("|", Resolve(nl).Where(v => v.Length > 0).Select(System.Text.RegularExpressions.Regex.Escape));
+                    pat.Append($"(?<g{ai}>{alts}|)"); break;   // always optional: existing files may lack a stage
+                }
                 default:
                     pat.Append($@"(?<g{ai}>\S*)"); break;
             }
@@ -280,19 +283,25 @@ public class FormatScheme : IVersionScheme {
             var m = System.Text.RegularExpressions.Regex.Match(version, BuildPattern(),
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             if (!m.Success) return null;
+            TokenHint MakeHint(FormatToken tok, System.Text.RegularExpressions.Group g) => tok switch {
+                InlineListToken il => new TokenHint(il.Values.Where(v => v.Length > 0).ToArray(), true,
+                    string.Join(" | ", il.Values.Where(v => v.Length > 0)), g.Index, g.Length),
+                NamedListToken nl  => new TokenHint(Resolve(nl).Where(v => v.Length > 0).ToArray(), true,
+                    $"{nl.ListName}: {string.Join(" | ", Resolve(nl).Where(v => v.Length > 0))}", g.Index, g.Length),
+                NumericToken nt    => new TokenHint(null, false, nt.Name, g.Index, g.Length),
+                _                  => new TokenHint(null, false, "", g.Index, g.Length),
+            };
+            // Two-pass: prefer list tokens (they may have empty match at token boundary)
             for (int i = 0; i < _interactive.Count; i++) {
                 var g = m.Groups[$"g{i}"];
-                if (!g.Success) continue;
-                if (cursorPos < g.Index || cursorPos > g.Index + g.Length) continue;
-                var tok = _interactive[i].Token;
-                return tok switch {
-                    InlineListToken il => new TokenHint(il.Values, true,
-                        string.Join(" | ", il.Values), g.Index, g.Length),
-                    NamedListToken nl  => new TokenHint(Resolve(nl), true,
-                        $"{nl.ListName}: {string.Join(" | ", Resolve(nl))}", g.Index, g.Length),
-                    NumericToken nt    => new TokenHint(null, false, nt.Name, g.Index, g.Length),
-                    _                  => new TokenHint(null, false, "", g.Index, g.Length),
-                };
+                if (!g.Success || cursorPos < g.Index || cursorPos > g.Index + g.Length) continue;
+                if (_interactive[i].Token is InlineListToken or NamedListToken)
+                    return MakeHint(_interactive[i].Token, g);
+            }
+            for (int i = 0; i < _interactive.Count; i++) {
+                var g = m.Groups[$"g{i}"];
+                if (!g.Success || cursorPos < g.Index || cursorPos > g.Index + g.Length) continue;
+                return MakeHint(_interactive[i].Token, g);
             }
         } catch { }
         return null;
@@ -300,7 +309,8 @@ public class FormatScheme : IVersionScheme {
 
     string[] ParseVersion(string version) {
         version ??= "";
-        var values = _interactive.Select(ctx => DefaultValue(ctx.Token)).ToArray();
+        var values = _interactive.Select(ctx =>
+            ctx.Token is InlineListToken or NamedListToken ? "" : DefaultValue(ctx.Token)).ToArray();
         try {
             var m = System.Text.RegularExpressions.Regex.Match(version, BuildPattern(),
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
@@ -355,18 +365,27 @@ public class FormatScheme : IVersionScheme {
         return sb.ToString();
     }
 
+    // Cycle through non-empty list values.
+    // If the list contains an empty entry (trailing comma = optional field):
+    //   "" → first → … → last → "" → first → …
+    // Otherwise (required field):
+    //   first → … → last → first → …  (wraps; starting from "" goes to first)
+    static string BumpListValue(string[] rawVals, string current) {
+        var vals     = rawVals.Where(v => v.Length > 0).ToArray();
+        bool hasEmpty = rawVals.Any(v => v.Length == 0);
+        if (vals.Length == 0) return current;
+        int idx = Array.IndexOf(vals, current);
+        if (idx < 0) return vals[0];                                        // "" or unknown → first value
+        int next = idx + 1;
+        if (next < vals.Length) return vals[next];
+        return hasEmpty ? "" : vals[0];                                     // last → "" (optional) or wrap (required)
+    }
+
     string BumpValue(FormatToken t, string current) {
         if (t is NumericToken)
             return (int.TryParse(current, out int v) ? v + 1 : 1).ToString();
-        if (t is InlineListToken il) {
-            int idx = Array.IndexOf(il.Values, current);
-            return il.Values[(idx < 0 ? 0 : idx + 1) % il.Values.Length];
-        }
-        if (t is NamedListToken nl) {
-            var vals = Resolve(nl);
-            int idx  = Array.IndexOf(vals, current);
-            return vals[(idx < 0 ? 0 : idx + 1) % vals.Length];
-        }
+        if (t is InlineListToken il) return BumpListValue(il.Values, current);
+        if (t is NamedListToken nl)  return BumpListValue(Resolve(nl), current);
         return current;
     }
 
@@ -422,83 +441,6 @@ public static class SchemeFactory {
         string converted = string.Join(".", parts.Select(p =>
             OldDateParts.Contains(p) ? $"{{{p.ToUpper()}}}" : $"{{#{p}}}"));
         return reset && !hasDate ? $"[{converted}]" : converted;
-    }
-}
-
-// ── Phosphor Icons ─────────────────────────────────────────────────────────────
-
-public static class Ph {
-    static readonly PrivateFontCollection _pfc = new();
-    static FontFamily _family;
-    static FontFamily _familyBold;
-
-    public const string Info        = "\ue2ce";
-    public const string Gear        = "\ue270";
-    public const string Warning     = "\ue4e0";
-    public const string Eye         = "\ue220";
-    public const string EyeSlash    = "\ue224";
-    public const string CheckCircle = "\ue184";
-    public const string FolderOpen  = "\ue248";
-    public const string Plus        = "\ue334";
-    public const string ArrowsClockwise = "\ue02c";
-
-    public static void Init(System.Reflection.Assembly asm) {
-        LoadFont(asm, "VerBump.Phosphor.ttf",     ref _family);
-        LoadFont(asm, "VerBump.Phosphor-Bold.ttf", ref _familyBold);
-    }
-
-    static void LoadFont(System.Reflection.Assembly asm, string resource, ref FontFamily target) {
-        try {
-            using var stream = asm.GetManifestResourceStream(resource);
-            if (stream == null) return;
-            var bytes  = new byte[stream.Length];
-            stream.Read(bytes, 0, bytes.Length);
-            var handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
-            int before = _pfc.Families.Length;
-            try   { _pfc.AddMemoryFont(handle.AddrOfPinnedObject(), bytes.Length); }
-            finally { handle.Free(); }
-            if (_pfc.Families.Length > before)
-                target = _pfc.Families[_pfc.Families.Length - 1];
-        } catch (Exception ex) { Log.Write("Ph.LoadFont", ex); }
-    }
-
-    public static Font Font(float size) =>
-        _family != null ? new Font(_family, size) : new Font("Segoe UI Symbol", size);
-
-    public static Font BoldFont(float size) =>
-        _familyBold != null ? new Font(_familyBold, size)
-        : _family   != null ? new Font(_family, size, FontStyle.Bold)
-        : new Font("Segoe UI Symbol", size, FontStyle.Bold);
-
-    public static Bitmap WarningBitmap(int px, Color color) {
-        var bmp = new Bitmap(px, px);
-        using var g = Graphics.FromImage(bmp);
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-        var pts = new[] {
-            new PointF(px / 2f,    1),
-            new PointF(px - 1,     px - 1),
-            new PointF(1,          px - 1),
-        };
-        using var fill = new SolidBrush(color);
-        g.FillPolygon(fill, pts);
-        // Ausrufezeichen (dunkel, zentriert)
-        using var excl = new SolidBrush(Color.FromArgb(200, 20, 20, 20));
-        float cx = px / 2f;
-        g.FillRectangle(excl, cx - 1.5f, px * 0.38f, 3, px * 0.30f);
-        g.FillEllipse(excl,   cx - 1.5f, px * 0.73f, 3, 3);
-        return bmp;
-    }
-
-    public static Bitmap ToBitmap(string glyph, float size, Color color, bool bold = false) {
-        int px  = (int)Math.Ceiling(size * 2);
-        var bmp = new Bitmap(px, px);
-        using var g     = Graphics.FromImage(bmp);
-        using var font  = bold ? BoldFont(size) : Font(size);
-        using var brush = new SolidBrush(color);
-        g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-        var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-        g.DrawString(glyph, font, brush, new RectangleF(0, 0, px, px), sf);
-        return bmp;
     }
 }
 
@@ -614,9 +556,10 @@ public static class VerBump {
         public IVersionScheme Scheme;
         public bool        Backup;
         public ProjectEntry Entry;
-        public bool?       HasIssues;   // null = noch am Scannen
-        public string      StaleInfo;   // Tooltip-Text wenn veraltet
-        public bool        IsUnsaved;   // true = via Kontextmenü geöffnet, noch nicht in settings.json
+        public bool?            HasIssues;      // null = noch am Scannen
+        public string           StaleInfo;      // Tooltip-Text wenn veraltet
+        public bool             IsUnsaved;      // true = via Kontextmenü geöffnet, noch nicht in settings.json
+        public ContextMenuStrip ListDropdown;   // list picker popup (for screenshot mode)
     }
 
 // ── Theme (OS-aware dark/light) ───────────────────────────────────────────────
@@ -683,22 +626,72 @@ class ThemedColorTable : ProfessionalColorTable {
     static bool         CheckMode            = false;
     static bool         ShouldRestart        = false;
     static string       ForceLang            = null; // --lang=XX overrides OS language
+#if DEMO
+    static string       ScreenshotDir        = null; // --screenshot=<dir>
+    static int          ScreenshotEntry      = 0;    // --screenshot-entry=N  (0-based)
+    static int          ScreenshotRow        = -1;   // --screenshot-row=N    (show dropdown on row N)
+    static bool         ScreenshotHelp       = false;// --screenshot-help     (open ? window)
+#endif
 
     [STAThread]
     public static void Main(string[] args) {
+        if (args.Any(a => a == "--help" || a == "-h" || a == "/?")) {
+            // Attach to the parent console so output is visible when launched from a terminal
+            [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+            static extern bool AttachConsole(uint dwProcessId);
+            AttachConsole(unchecked((uint)-1)); // ATTACH_PARENT_PROCESS
+            string helpText = """
+
+VerBump — Version file manager
+Usage:  VerBump.exe [path…] [options]
+
+Arguments:
+  path                     VERSION file or project folder to open
+
+Options:
+  --settings=<file>        Use a specific settings.json
+  --lang=<xx>              Force UI language (e.g. en, de)
+  --bump=<1-4>             Silent bump: 1=major 2=minor 3=patch 4=list (no GUI)
+  --check                  Git pre-commit hook mode
+
+  -h, --help               Show this help
+""";
+#if DEMO
+            helpText += """
+
+Screenshot automation:
+  --screenshot=<dir>       Take screenshots and write them to <dir>, then exit
+  --screenshot-row=<N>     Select row N in the main window and open its list dropdown (0-based)
+  --screenshot-entry=<N>   Select entry N in the settings dialog (0-based)
+  --screenshot-help        Open the Lists ? help window in the settings screenshot
+""";
+#endif
+            Console.WriteLine(helpText);
+            return;
+        }
         foreach (var arg in args) {
             if (arg.StartsWith("--bump=", StringComparison.OrdinalIgnoreCase)) {
                 if (int.TryParse(arg[7..], out int b) && b >= 1 && b <= 4)
                     SilentBumpPart = b - 1;
             } else if (arg.StartsWith("--lang=", StringComparison.OrdinalIgnoreCase)) {
                 ForceLang = arg[7..].ToLower();
+#if DEMO
+            } else if (arg.StartsWith("--screenshot=", StringComparison.OrdinalIgnoreCase)) {
+                ScreenshotDir = arg[13..].Trim('"');
+            } else if (arg.StartsWith("--screenshot-entry=", StringComparison.OrdinalIgnoreCase)) {
+                if (int.TryParse(arg[19..], out int se)) ScreenshotEntry = Math.Max(0, se);
+            } else if (arg.StartsWith("--screenshot-row=", StringComparison.OrdinalIgnoreCase)) {
+                if (int.TryParse(arg[17..], out int sr)) ScreenshotRow = Math.Max(0, sr);
+            } else if (arg.Equals("--screenshot-help", StringComparison.OrdinalIgnoreCase)) {
+                ScreenshotHelp = true;
+#endif
             } else if (arg.Equals("--check", StringComparison.OrdinalIgnoreCase)) {
                 CheckMode = true;
             } else {
                 string p   = arg.Trim('"');
                 string ext = Path.GetExtension(p).ToLowerInvariant();
                 if ((ext == ".json" || ext == ".json5") && File.Exists(p))
-                    OverrideSettingsPath = p;
+                    OverrideSettingsPath = NormalizeHistoryPath(p);
                 else if (File.Exists(p) && Path.GetFileName(p).Equals("VERSION", StringComparison.OrdinalIgnoreCase))
                     InitialVersionPaths.Add(p);
                 else if (Directory.Exists(p)) {
@@ -802,6 +795,7 @@ class ThemedColorTable : ProfessionalColorTable {
         }
         HashSet<string> checkIgnoreDirs  = null;
         List<string>    checkIgnoreFiles = null;
+        int             checkStagedCount = -1;   // ≥0 = git available; -1 = fallback
         if (CheckMode && singleVersionPath != null) {
             string vf = Path.GetFullPath(singleVersionPath);
             var matchingEntry = settings.Paths?.FirstOrDefault(p => {
@@ -811,7 +805,28 @@ class ThemedColorTable : ProfessionalColorTable {
             var ce = matchingEntry ?? new ProjectEntry { Path = Path.GetDirectoryName(vf) ?? "", Scheme = "semver" };
             checkIgnoreDirs  = BuildEffectiveIgnoreDirs(settings, ce);
             checkIgnoreFiles = BuildEffectiveIgnoreFiles(settings, ce);
-            if (GetNewerFiles(vf, 1, checkIgnoreDirs, checkIgnoreFiles).Count == 0) {
+
+            // Fast path: ask git whether VERSION is already staged for this commit.
+            // If yes, the user already bumped – no UI needed.
+            string projectDir = Path.GetDirectoryName(vf);
+            var staged = GetGitStagedFiles(projectDir);
+            if (staged != null) {
+                // Compare using the full path relative to the git root so that
+                // in monorepos a different project's VERSION doesn't give a false positive.
+                string gitRoot      = TryGetGitRoot(projectDir);
+                string vfNorm       = vf.Replace('\\', '/');
+                string gitRootNorm  = gitRoot?.Replace('\\', '/').TrimEnd('/');
+                string vfRelative   = (gitRootNorm != null && vfNorm.StartsWith(gitRootNorm + "/", StringComparison.OrdinalIgnoreCase))
+                                      ? vfNorm[(gitRootNorm.Length + 1)..]
+                                      : Path.GetFileName(vf); // fallback: filename only
+                bool versionStaged = staged.Any(f =>
+                    string.Equals(f.Trim().Replace('\\', '/'), vfRelative,
+                                  StringComparison.OrdinalIgnoreCase));
+                if (versionStaged) { Environment.Exit(0); return; }
+                checkStagedCount = staged.Count; // save for banner
+                // VERSION not staged → fall through to open UI
+            } else if (GetNewerFiles(vf, 1, checkIgnoreDirs, checkIgnoreFiles).Count == 0) {
+                // Fallback (no git): mtime comparison
                 Environment.Exit(0); return;
             }
             // Show only the stale project, not all projects from settings.json
@@ -865,9 +880,11 @@ class ThemedColorTable : ProfessionalColorTable {
         int requestedFormWidth = Math.Min(Math.Max(720, requestedContentWidth + 40), maxFormWidth);
         if (CheckMode && singleVersionPath != null)
             formTitle = L.T("form.git_hook_title", Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(singleVersionPath))) ?? "?");
+        const int hookBannerH = 50;
+        int extraH = (CheckMode && singleVersionPath != null) ? hookBannerH : 0;
         using var form = new Form {
             Text = formTitle,
-            Width = requestedFormWidth, Height = 80 + (willHaveUnsavedEntry ? InitialVersionPaths.Count : settings.Paths.Count) * 55 + 138,
+            Width = requestedFormWidth, Height = 80 + (willHaveUnsavedEntry ? InitialVersionPaths.Count : settings.Paths.Count) * 55 + 138 + extraH,
             StartPosition = FormStartPosition.CenterScreen,
             KeyPreview = true,
             BackColor = bgMid, ForeColor = fgW
@@ -882,17 +899,21 @@ class ThemedColorTable : ProfessionalColorTable {
         bool hookBypassAllowed = CheckMode && policy.AllowHookBypass;
         var btnOk  = new Button {
             Text = CheckMode ? L.T("btn.commit") : L.T("btn.save"),
-            Left = 590, Top = 15, Width = 120, Height = 35,
+            Top = 15, Width = 120, Height = 35,
             DialogResult = DialogResult.OK,
             FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204),
             ForeColor = Color.White, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
         var btnCan = new Button {
             Text = CheckMode ? L.T("btn.block_commit") : L.T("btn.cancel"),
-            Left = hookBypassAllowed ? 340 : 460, Top = 15, Width = 120, Height = 35,
+            Top = 15, Width = 120, Height = 35,
             DialogResult = DialogResult.Cancel,
             FlatStyle = FlatStyle.Flat,
             BackColor = CheckMode ? Color.FromArgb(160, 40, 40) : bgBtn,
             ForeColor = CheckMode ? Color.White : fgW };
+        if (!CheckMode) {
+            new ToolTip().SetToolTip(btnOk,  L.T("btn.save_tip"));
+            new ToolTip().SetToolTip(btnCan, L.T("btn.cancel_tip"));
+        }
 
         form.AcceptButton = btnOk;
         form.CancelButton = btnCan;
@@ -928,10 +949,8 @@ class ThemedColorTable : ProfessionalColorTable {
         var undoStack = new Stack<(int entryIdx, string oldVersion, string label)>();
         Action updateUndoItem = () => { };
 
-        Ph.Init(System.Reflection.Assembly.GetExecutingAssembly());
-
         // ── Version-box hints (cursor position → status + context menu) ───────
-        void AttachVersionHints(TextBox vtb, IVersionScheme sch) {
+        ContextMenuStrip AttachVersionHints(TextBox vtb, IVersionScheme sch) {
             void updateHint() {
                 var hint = sch.GetTokenAt(vtb.Text, vtb.SelectionStart);
                 if (hint == null) {
@@ -948,7 +967,10 @@ class ThemedColorTable : ProfessionalColorTable {
             var cms = new ContextMenuStrip { Renderer = new ToolStripProfessionalRenderer(new ThemedColorTable()) };
             cms.Opening += (s, e) => {
                 cms.Items.Clear();
-                var hint = sch.GetTokenAt(vtb.Text, vtb.SelectionStart);
+                // cms.Tag can carry an explicit cursor position (set by screenshot mode)
+                int cursorForHint = cms.Tag is int tagPos ? tagPos : vtb.SelectionStart;
+                cms.Tag = null;
+                var hint = sch.GetTokenAt(vtb.Text, cursorForHint);
                 if (hint?.Values == null || !hint.IsList) { e.Cancel = true; return; }
                 cms.Items.Add(new ToolStripMenuItem($"— {hint.Label} —") { Enabled = false, ForeColor = fgDim });
                 cms.Items.Add(new ToolStripSeparator());
@@ -973,6 +995,7 @@ class ThemedColorTable : ProfessionalColorTable {
                     e.Handled = true; e.SuppressKeyPress = true;
                 }
             };
+            return cms;
         }
 
         // ── Row context menu ──────────────────────────────────────────────────
@@ -981,17 +1004,25 @@ class ThemedColorTable : ProfessionalColorTable {
         var ctxEdit          = new ToolStripMenuItem(L.T("menu.edit_settings"))  { ForeColor = fgW };
         var ctxExplore       = new ToolStripMenuItem(L.T("menu.open_explorer")) { ForeColor = fgW };
         var ctxAddVersionFav = new ToolStripMenuItem(L.T("menu.add_version_fav")) { ForeColor = Color.FromArgb(255, 200, 60) };
+        var ctxTagSep        = new ToolStripSeparator();
+        var ctxTag           = new ToolStripMenuItem() { ForeColor = Color.FromArgb(72, 199, 142) };
+        var ctxTagPush       = new ToolStripMenuItem() { ForeColor = Color.FromArgb(72, 199, 142) };
         var ctxAddToSettings = new ToolStripMenuItem(L.T("toolbar.add_project")) { ForeColor = fgW };
         var ctxBottomSep    = new ToolStripSeparator();
         rowCtx.Items.Add(ctxEdit);
         rowCtx.Items.Add(ctxExplore);
         rowCtx.Items.Add(ctxAddVersionFav);
+        rowCtx.Items.Add(ctxTagSep);
+        rowCtx.Items.Add(ctxTag);
+        rowCtx.Items.Add(ctxTagPush);
         rowCtx.Items.Add(ctxBottomSep);
         rowCtx.Items.Add(ctxAddToSettings);
         rowCtx.BackColor           = bgMid;
         ctxEdit.BackColor          = bgMid;
         ctxExplore.BackColor       = bgMid;
         ctxAddVersionFav.BackColor = bgMid;
+        ctxTag.BackColor           = bgMid;
+        ctxTagPush.BackColor       = bgMid;
         ctxAddToSettings.BackColor = bgMid;
 
         rowCtx.Opening += (s, e) => {
@@ -1008,8 +1039,23 @@ class ThemedColorTable : ProfessionalColorTable {
                 ctxAddVersionFav.Text    = alreadyFav
                     ? L.T("menu.remove_version_fav")
                     : L.T("menu.add_version_fav");
+                // Tag items: only show when project is inside a git repo
+                string tagDir = fp != null ? Path.GetDirectoryName(fp) : null;
+                bool hasGit   = tagDir != null && FindGitDir(tagDir) != null;
+                string ver    = uiEntries[ctxTargetIndex].VersionBox.Text.Trim();
+                string tagName = ver.StartsWith("v", StringComparison.OrdinalIgnoreCase) ? ver : "v" + ver;
+                ctxTagSep.Visible  = hasGit;
+                ctxTag.Visible     = hasGit;
+                ctxTagPush.Visible = hasGit;
+                if (hasGit) {
+                    ctxTag.Text     = L.T("menu.tag_head",      tagName);
+                    ctxTagPush.Text = L.T("menu.tag_head_push", tagName);
+                }
             } else {
                 ctxAddVersionFav.Visible = false;
+                ctxTagSep.Visible        = false;
+                ctxTag.Visible           = false;
+                ctxTagPush.Visible       = false;
             }
             ctxBottomSep.Visible = ctxAddToSettings.Visible;
         };
@@ -1025,6 +1071,16 @@ class ThemedColorTable : ProfessionalColorTable {
             string folder = Path.GetDirectoryName(uiEntries[ctxTargetIndex].FilePath);
             if (folder != null && Directory.Exists(folder))
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", folder) { UseShellExecute = true });
+        };
+        ctxTag.Click += (s, e) => {
+            if (ctxTargetIndex < 0 || ctxTargetIndex >= uiEntries.Count) return;
+            var ui = uiEntries[ctxTargetIndex];
+            DoGitTag(Path.GetDirectoryName(ui.FilePath), ui.VersionBox.Text.Trim(), false, form);
+        };
+        ctxTagPush.Click += (s, e) => {
+            if (ctxTargetIndex < 0 || ctxTargetIndex >= uiEntries.Count) return;
+            var ui = uiEntries[ctxTargetIndex];
+            DoGitTag(Path.GetDirectoryName(ui.FilePath), ui.VersionBox.Text.Trim(), true, form);
         };
         ctxAddToSettings.Click += (s, e) => {
             if (ctxTargetIndex < 0 || ctxTargetIndex >= uiEntries.Count) return;
@@ -1191,7 +1247,7 @@ class ThemedColorTable : ProfessionalColorTable {
                 if (tb.BackColor == Color.DarkGreen) return;
                 tb.BackColor = scheme.Matches(tb.Text.Trim()) ? bgLight : Color.FromArgb(110, 50, 0);
             };
-            AttachVersionHints(tb, scheme);
+            var rowDropdown = AttachVersionHints(tb, scheme);
 
             var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(5, 5, 0, 0) };
             var labels = scheme.GetButtonLabels();
@@ -1213,9 +1269,10 @@ class ThemedColorTable : ProfessionalColorTable {
                     selectedIndex = entryIndex;
                     updateSelection();
                     string before = tbCaptured.Text.Trim();
+                    string after  = schemeCaptured.Bump(before, partIndex);
                     undoStack.Push((entryIndex, before, labels[partIndex] + "+"));
                     updateUndoItem();
-                    tbCaptured.Text = schemeCaptured.Bump(before, partIndex);
+                    tbCaptured.Text = after;
                     tbCaptured.BackColor = Color.DarkGreen;
                 };
                 buttonPanel.Controls.Add(btn);
@@ -1246,16 +1303,18 @@ class ThemedColorTable : ProfessionalColorTable {
                     ShowSettingsDialog(form, settings, jsonPath, Math.Max(0, idx));
                 };
                 c.MouseDown += (s, e) => {
-                    if (e.Button != MouseButtons.Right) return;
-                    ctxTargetIndex = rowIdx; selectedIndex = rowIdx; updateSelection();
-                    rowCtx.Show((Control)s, e.Location);
+                    if (e.Button == MouseButtons.Left) {
+                        selectedIndex = rowIdx; updateSelection();
+                    } else if (e.Button == MouseButtons.Right) {
+                        ctxTargetIndex = rowIdx; selectedIndex = rowIdx; updateSelection();
+                        rowCtx.Show((Control)s, e.Location);
+                    }
                 };
             }
             AttachRowEvents(selectionPanel); AttachRowEvents(table);
             AttachRowEvents(lbl); AttachRowEvents(lblHotkey); AttachRowEvents(iconBox); AttachRowEvents(strip);
             AttachRowEvents(buttonPanel);
-            foreach (Control c in buttonPanel.Controls) AttachRowEvents(c);
-            uiEntries.Add(new ProjectUI { SelectionPanel = selectionPanel, StatusStrip = strip, VersionBox = tb, FilePath = vFile, OriginalVersion = currentV, Scheme = scheme, Backup = entry.Backup, Entry = entry });
+            uiEntries.Add(new ProjectUI { SelectionPanel = selectionPanel, StatusStrip = strip, VersionBox = tb, FilePath = vFile, OriginalVersion = currentV, Scheme = scheme, Backup = entry.Backup, Entry = entry, ListDropdown = rowDropdown });
         }
 
         // ── Unsaved entries: VERSION paths passed via CLI (unsaved mode) ──────────
@@ -1298,7 +1357,7 @@ class ThemedColorTable : ProfessionalColorTable {
                 if (tb.BackColor == Color.DarkGreen) return;
                 tb.BackColor = scheme.Matches(tb.Text.Trim()) ? bgLight : Color.FromArgb(110, 50, 0);
             };
-            AttachVersionHints(tb, scheme);
+            var rowDropdown2 = AttachVersionHints(tb, scheme);
             var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(5, 5, 0, 0) };
             var labels = scheme.GetButtonLabels();
             for (int i = 0; i < labels.Count; i++) {
@@ -1334,9 +1393,12 @@ class ThemedColorTable : ProfessionalColorTable {
             void AttachRowEvents2(Control c) {
                 c.MouseDoubleClick += (s, e) => { };   // unsaved: no settings to open
                 c.MouseDown += (s, e) => {
-                    if (e.Button != MouseButtons.Right) return;
-                    ctxTargetIndex = rowIdx2; selectedIndex = rowIdx2; updateSelection();
-                    rowCtx.Show((Control)s, e.Location);
+                    if (e.Button == MouseButtons.Left) {
+                        selectedIndex = rowIdx2; updateSelection();
+                    } else if (e.Button == MouseButtons.Right) {
+                        ctxTargetIndex = rowIdx2; selectedIndex = rowIdx2; updateSelection();
+                        rowCtx.Show((Control)s, e.Location);
+                    }
                 };
             }
             AttachRowEvents2(selectionPanel); AttachRowEvents2(table);
@@ -1344,7 +1406,7 @@ class ThemedColorTable : ProfessionalColorTable {
             AttachRowEvents2(buttonPanel);
             foreach (Control c in buttonPanel.Controls) AttachRowEvents2(c);
             uiEntries.Add(new ProjectUI { SelectionPanel = selectionPanel, StatusStrip = strip, VersionBox = tb,
-                FilePath = target, OriginalVersion = currentV, Scheme = scheme, Backup = false, Entry = entry, IsUnsaved = true });
+                FilePath = target, OriginalVersion = currentV, Scheme = scheme, Backup = false, Entry = entry, IsUnsaved = true, ListDropdown = rowDropdown2 });
             selectedIndex = uiEntries.Count - 1;
         }
 
@@ -1384,16 +1446,25 @@ class ThemedColorTable : ProfessionalColorTable {
         var bottomPanel = new Panel { Dock = DockStyle.Bottom, Height = 65, BackColor = bgMid };
         bottomPanel.Controls.Add(btnOk);
         bottomPanel.Controls.Add(btnCan);
+        Button btnBypass = null;
         if (hookBypassAllowed) {
-            var btnBypass = new Button {
+            btnBypass = new Button {
                 Text = L.T("btn.bypass_hook"),
-                Left = 470, Top = 15, Width = 130, Height = 35,
+                Top = 15, Width = 130, Height = 35,
                 FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(160, 100, 0), ForeColor = Color.White,
                 Font = new Font("Segoe UI", 9.5F),
             };
             btnBypass.Click += (s, e) => Environment.Exit(0);
             bottomPanel.Controls.Add(btnBypass);
         }
+        // Reposition buttons flush to the right edge on every layout pass.
+        bottomPanel.Layout += (s, e) => {
+            int r = bottomPanel.ClientSize.Width - 10;
+            btnOk.Left  = r - btnOk.Width;
+            btnCan.Left = btnOk.Left - 10 - btnCan.Width;
+            if (btnBypass != null)
+                btnBypass.Left = btnCan.Left - 10 - btnBypass.Width;
+        };
         bool showOrange = true, showGreen = true;
         Action applyFilter = null;
         ToolStripMenuItem menuSync = null;
@@ -1463,6 +1534,7 @@ class ThemedColorTable : ProfessionalColorTable {
         menuEditSett.Click += (s, e) => ShowSettingsDialog(form, settings, jsonPath);
 
         void LoadSettingsFile(string path) {
+            path = NormalizeHistoryPath(path);
             OverrideSettingsPath = path;
             AddToHistory(appConfig.RecentSettings, path, appConfig.HistoryMaxLength);
             SaveAppConfig(appConfig);
@@ -1471,6 +1543,7 @@ class ThemedColorTable : ProfessionalColorTable {
         }
 
         void LoadVersionFile(string path) {
+            path = NormalizeHistoryPath(path);
             InitialVersionPaths.Clear();
             InitialVersionPaths.Add(path);
             OverrideSettingsPath = null;
@@ -1634,6 +1707,36 @@ class ThemedColorTable : ProfessionalColorTable {
         form.Controls.Add(mainPanel);
         form.Controls.Add(bottomPanel);
         form.Controls.Add(statusPanel);
+
+        // ── Hook-mode info banner (between menu and project rows) ──────────────
+        if (CheckMode && singleVersionPath != null) {
+            var bannerBg  = Color.FromArgb(90, 55, 0);
+            var bannerFg  = Color.FromArgb(255, 210, 100);
+            var hookBanner = new Panel {
+                Dock = DockStyle.Top, Height = hookBannerH,
+                BackColor = bannerBg, Padding = new Padding(10, 0, 10, 0),
+            };
+            string line1 = checkStagedCount >= 0
+                ? L.T("hook.banner_staged", checkStagedCount)
+                : L.T("hook.banner_fallback");
+            var lbl1 = new Label {
+                Text = line1, Dock = DockStyle.Top, Height = 26,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                ForeColor = bannerFg, BackColor = bannerBg,
+                TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(2, 0, 0, 0),
+            };
+            var lbl2 = new Label {
+                Text = L.T("hook.banner_hint"), Dock = DockStyle.Top, Height = 20,
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = Color.FromArgb(220, 185, 100), BackColor = bannerBg,
+                TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(2, 0, 0, 0),
+            };
+            // add in reverse (DockStyle.Top stacks last-added at top)
+            hookBanner.Controls.Add(lbl2);
+            hookBanner.Controls.Add(lbl1);
+            form.Controls.Add(hookBanner);
+        }
+
         form.Controls.Add(menuStrip);
         form.MainMenuStrip = menuStrip;
 
@@ -1689,6 +1792,14 @@ class ThemedColorTable : ProfessionalColorTable {
                         MessageBox.Show(L.T("status.ok"), ui.FilePath, MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 return;
+            }
+            if (e.KeyCode == Keys.F2 && selectedIndex >= 0 && selectedIndex < uiEntries.Count) {
+                var ui = uiEntries[selectedIndex];
+                if (!ui.IsUnsaved && jsonPath != null) {
+                    int idx = settings.Paths.IndexOf(ui.Entry);
+                    ShowSettingsDialog(form, settings, jsonPath, Math.Max(0, idx));
+                }
+                e.Handled = true; e.SuppressKeyPress = true; return;
             }
             if (e.Control && e.KeyCode == Keys.Home) {
                 selectedIndex = 0; updateSelection(); e.Handled = true; return;
@@ -1794,6 +1905,58 @@ class ThemedColorTable : ProfessionalColorTable {
             }
         };
 
+                        // ── Screenshot mode ───────────────────────────────────────────────────
+#if DEMO
+        if (ScreenshotDir != null) {
+            string scDir  = ScreenshotDir;
+            string scVer  = appVersion;
+            string scLang = L.Lang;
+            form.TopMost  = true;
+            form.Shown += async (s, e) => {
+                await Task.Delay(400); // let staleness-check painting finish
+                Directory.CreateDirectory(scDir);
+                form.TopMost = true;
+                Application.DoEvents();
+
+                // Select target row and position cursor on the list token (if any)
+                TokenHint dropHint  = null;
+                Rectangle anchorScr = default;
+                if (ScreenshotRow >= 0 && ScreenshotRow < uiEntries.Count) {
+                    selectedIndex = ScreenshotRow; updateSelection();
+                    var ui = uiEntries[ScreenshotRow];
+                    string snapVer = ui.VersionBox.Text;
+                    for (int p = snapVer.Length; p >= 0; p--) {
+                        var th = ui.Scheme.GetTokenAt(snapVer, p);
+                        if (th?.IsList == true && th.Values?.Length > 0) { dropHint = th; break; }
+                    }
+                    // Cursor at end of list token (= end of text when token is empty-matched)
+                    int cursorPos = dropHint != null ? dropHint.Start + dropHint.Length : snapVer.Length;
+                    ui.VersionBox.Focus();
+                    ui.VersionBox.SelectionLength = 0;
+                    ui.VersionBox.SelectionStart  = cursorPos;
+                    Application.DoEvents(); // commit selection for PrintWindow
+                    anchorScr = ui.VersionBox.RectangleToScreen(ui.VersionBox.ClientRectangle);
+                }
+
+                string mainPath = Path.Combine(scDir, $"main-{scLang}-{scVer}.png");
+                SaveCompositeScreenshot(mainPath, Color.White, form);
+                form.TopMost = false;
+
+                // Paint the dropdown as a bitmap overlay (avoids all WinForms popup-capture issues)
+                if (dropHint != null)
+                    PaintDropdownOnPng(mainPath, form.Bounds, anchorScr, dropHint.Label, dropHint.Values);
+
+                // open settings dialog (it will auto-close and screenshot itself)
+                ShowSettingsDialog(form, settings, jsonPath, ScreenshotEntry);
+                // write current.js so the website knows which version to load
+                File.WriteAllText(Path.Combine(scDir, "current.js"),
+                    $"var VERBUMP_VERSION = \"{scVer}\";\n");
+                form.DialogResult = DialogResult.Cancel;
+                form.Close();
+            };
+        }
+#endif
+
         if (form.ShowDialog() == DialogResult.OK) {
             foreach (var ui in uiEntries) {
                 if (ui.VersionBox.Text != ui.OriginalVersion) {
@@ -1809,11 +1972,145 @@ class ThemedColorTable : ProfessionalColorTable {
 
         // ── Check mode: re-check after UI and signal the hook ─────────────────
         if (CheckMode && singleVersionPath != null) {
-            string vf      = Path.GetFullPath(singleVersionPath);
-            var newerFiles = GetNewerFiles(vf, 1, checkIgnoreDirs, checkIgnoreFiles);
-            Environment.Exit(newerFiles.Count > 0 ? 1 : 0);
+            string vf         = Path.GetFullPath(singleVersionPath);
+            string projectDir = Path.GetDirectoryName(vf);
+            // Was VERSION modified after the last commit?  (i.e. user just bumped it)
+            var lastCommit = GetLastGitCommitTime(projectDir);
+            if (lastCommit.HasValue) {
+                bool bumped = File.GetLastWriteTimeUtc(vf) > lastCommit.Value;
+                if (bumped) {
+                    // Stage VERSION so the bump lands in the same commit ("Bump & Commit")
+                    TryRunGit(projectDir, $"add \"{vf}\"");
+                    // Option C: offer to auto-tag HEAD after the commit via post-commit hook
+                    string newVer = "";
+                    try { newVer = File.ReadAllText(vf).Trim(); } catch { }
+                    if (newVer.Length > 0) {
+                        string tagName = newVer.StartsWith("v", StringComparison.OrdinalIgnoreCase)
+                            ? newVer : "v" + newVer;
+                        var ask = MessageBox.Show(
+                            L.T("tag.prompt_hook", tagName),
+                            "VerBump",
+                            MessageBoxButtons.YesNo,
+                            MessageBoxIcon.Question,
+                            MessageBoxDefaultButton.Button2);
+                        if (ask == DialogResult.Yes) {
+                            if (!HasGitPostHook(projectDir)) InstallGitPostHook(projectDir);
+                            string gitDir = FindGitDir(projectDir) ?? Path.Combine(projectDir, ".git");
+                            try { File.WriteAllText(Path.Combine(gitDir, "VERBUMP_PENDING_TAG"), newVer); }
+                            catch { }
+                        }
+                    }
+                }
+                Environment.Exit(bumped ? 0 : 1);
+            } else {
+                // Fallback: no git → mtime comparison
+                var newerFiles = GetNewerFiles(vf, 1, checkIgnoreDirs, checkIgnoreFiles);
+                Environment.Exit(newerFiles.Count > 0 ? 1 : 0);
+            }
         }
     }
+
+    #if DEMO
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
+
+    // Capture one or more windows (Forms, ContextMenuStrips, …) into a single PNG.
+    // The bounding box of all visible windows is used; gaps are filled with 'fill'.
+    static void SaveCompositeScreenshot(string path, Color fill, params Control[] windows) {
+        const uint PW_RENDERFULLCONTENT = 2;
+        Application.DoEvents();
+        var visible = windows.Where(w => w != null && w.IsHandleCreated && w.Visible).ToList();
+        if (visible.Count == 0) return;
+        int left   = visible.Min(w => w.Bounds.Left);
+        int top    = visible.Min(w => w.Bounds.Top);
+        int right  = visible.Max(w => w.Bounds.Right);
+        int bottom = visible.Max(w => w.Bounds.Bottom);
+        using var bmp = new Bitmap(right - left, bottom - top, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using var g   = Graphics.FromImage(bmp);
+        g.Clear(fill);
+        foreach (var w in visible) {
+            var b = w.Bounds;
+            using var wb = new Bitmap(b.Width, b.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using var wg = Graphics.FromImage(wb);
+            if (w is ContextMenuStrip) {
+                // PrintWindow cannot reliably capture popup/layered windows like ContextMenuStrip;
+                // use CopyFromScreen instead (reads pixels directly from the screen).
+                wg.CopyFromScreen(b.Left, b.Top, 0, 0, b.Size);
+            } else {
+                IntPtr hdc = wg.GetHdc();
+                PrintWindow(w.Handle, hdc, PW_RENDERFULLCONTENT);
+                wg.ReleaseHdc(hdc);
+            }
+            g.DrawImage(wb, b.Left - left, b.Top - top);
+        }
+        bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+    }
+
+    // Paint a CMS-style dropdown menu onto an already-saved PNG (avoids WinForms popup-capture issues).
+    static void PaintDropdownOnPng(string pngPath, Rectangle formScreenRect,
+                                   Rectangle anchorScreenRect, string label, string[] items) {
+        Bitmap bmp;
+        using (var fs = new FileStream(pngPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            bmp = new Bitmap(fs);
+        using (bmp)
+        using (var g = Graphics.FromImage(bmp)) {
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            using var fMenu = new Font("Segoe UI", 9F);
+            Color bgColor  = Theme.BgMid;
+            Color sepColor = Theme.Sep;
+            Color fgColor  = Theme.Fg;
+            Color dimColor = Theme.FgMuted;
+            int itemH = 22, padX = 22, padY = 2;
+
+            // Measure menu width from content
+            int menuW = 0;
+            foreach (var item in items) {
+                int w = (int)Math.Ceiling(g.MeasureString(item.Length > 0 ? item : "(none)", fMenu).Width) + padX + 12;
+                if (w > menuW) menuW = w;
+            }
+            menuW = Math.Max(menuW,
+                (int)Math.Ceiling(g.MeasureString($"— {label} —", fMenu).Width) + padX + 12);
+            menuW = Math.Max(menuW, 110);
+
+            int menuH = itemH + 5 + items.Length * itemH + padY * 2;
+
+            // Bitmap coordinates: just below the anchor (version text box)
+            int bx = anchorScreenRect.Left - formScreenRect.Left;
+            int by = anchorScreenRect.Bottom - formScreenRect.Top;
+            // Clamp so the menu stays inside the bitmap
+            bx = Math.Max(0, Math.Min(bx, bmp.Width  - menuW));
+            by = Math.Max(0, Math.Min(by, bmp.Height - menuH));
+
+            // Drop-shadow
+            using var shadow = new SolidBrush(Color.FromArgb(80, 0, 0, 0));
+            g.FillRectangle(shadow, bx + 3, by + 3, menuW, menuH);
+            // Background
+            using var bgBrush = new SolidBrush(bgColor);
+            g.FillRectangle(bgBrush, bx, by, menuW, menuH);
+            // Border
+            using var borderPen = new Pen(sepColor);
+            g.DrawRectangle(borderPen, bx, by, menuW - 1, menuH - 1);
+
+            int y = by + padY;
+            // Header (disabled label)
+            using var dimBrush = new SolidBrush(dimColor);
+            g.DrawString($"— {label} —", fMenu, dimBrush, bx + padX, y + 1);
+            y += itemH;
+            // Separator
+            using var sepPen = new Pen(sepColor);
+            g.DrawLine(sepPen, bx + 1, y + 2, bx + menuW - 2, y + 2);
+            y += 5;
+            // Items
+            using var fgBrush = new SolidBrush(fgColor);
+            foreach (var item in items) {
+                g.DrawString(item.Length > 0 ? item : "(none)", fMenu, fgBrush, bx + padX, y + 1);
+                y += itemH;
+            }
+            bmp.Save(pngPath, System.Drawing.Imaging.ImageFormat.Png);
+        }
+    }
+
+#endif
 
     static void ShowSettingsDialog(Form owner, Settings settings, string jsonPath, int initialEntryIndex = 0) {
         var appCfg = LoadAppConfig();
@@ -1851,14 +2148,32 @@ class ThemedColorTable : ProfessionalColorTable {
         static string DictToListsText(Dictionary<string, string[]> d) =>
             string.Join("\r\n", (d ?? new Dictionary<string, string[]>())
                 .Select(kv => $"{kv.Key}: {string.Join(", ", kv.Value)}"));
+        // Expands "{N-M}" ranges within a single list entry.
+        // "-alpha{1-3}" → ["-alpha1", "-alpha2", "-alpha3"]
+        // "-rc{01-03}"  → ["-rc01", "-rc02", "-rc03"]  (zero-padded)
+        static IEnumerable<string> ExpandListEntry(string val) {
+            var m = System.Text.RegularExpressions.Regex.Match(val, @"^(.*)\{(\d+)-(\d+)\}(.*)$");
+            if (!m.Success) { yield return val; yield break; }
+            string pre = m.Groups[1].Value, fromS = m.Groups[2].Value,
+                   toS = m.Groups[3].Value, suf   = m.Groups[4].Value;
+            if (!int.TryParse(fromS, out int from) || !int.TryParse(toS, out int to) || from > to)
+                { yield return val; yield break; }
+            int width = (fromS.Length > 1 && fromS[0] == '0') ? fromS.Length : 0;
+            for (int i = from; i <= to; i++)
+                yield return pre + (width > 0 ? i.ToString().PadLeft(width, '0') : i.ToString()) + suf;
+        }
+
         static Dictionary<string, string[]> ListsTextToDict(string text) {
             var d = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
             foreach (var line in (text ?? "").Split('\n').Select(s => s.Trim('\r', ' '))) {
                 int ci = line.IndexOf(':');
                 if (ci <= 0) continue;
                 var name = line[..ci].Trim();
-                var vals = line[(ci + 1)..].Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToArray();
-                if (name.Length > 0 && vals.Length > 0) d[name] = vals;
+                var vals = line[(ci + 1)..].Split(',')
+                    .Select(s => s.Trim())
+                    .SelectMany(s => s.Length > 0 ? ExpandListEntry(s) : new[] { "" })
+                    .ToArray();
+                if (name.Length > 0 && vals.Any(v => v.Length > 0)) d[name] = vals;
             }
             return d;
         }
@@ -1873,7 +2188,14 @@ class ThemedColorTable : ProfessionalColorTable {
         new Label { Parent = grpGlobal, Text = L.T("settings.ignore_files"), Left = 8, Top = 68, Width = 104, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
         var tbGlobalIgnoreFiles = new TextBox { Parent = grpGlobal, Left = 116, Top = 66, Width = 448, Height = 36, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = ListToText(globalIgnoreFiles) };
         new Label { Parent = grpGlobal, Text = L.T("settings.lists"), Left = 8, Top = 116, Width = 104, Height = 20, TextAlign = ContentAlignment.MiddleRight, Font = fUI, ForeColor = fgW };
-        var tbGlobalLists = new TextBox { Parent = grpGlobal, Left = 116, Top = 114, Width = 448, Height = 36, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = DictToListsText(settings.Lists) };
+        var tbGlobalLists = new TextBox { Parent = grpGlobal, Left = 116, Top = 114, Width = 418, Height = 36, BackColor = bgLight, ForeColor = fgW, BorderStyle = BorderStyle.FixedSingle, Font = fMono, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = DictToListsText(settings.Lists) };
+        var btnListsHelp = new Button {
+            Parent = grpGlobal, Text = "?", Left = 538, Top = 122, Width = 26, Height = 23,
+            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(70, 70, 70), ForeColor = fgW, Font = fUI,
+        };
+        btnListsHelp.Click += (s, e) =>
+            ToggleHelpWindow(L.T("settings.lists"), L.T("settings.lists_help"), tbGlobalLists, dlg, btnListsHelp);
+        dlg.FormClosed += (s, e) => { if (_helpWindow != null && !_helpWindow.IsDisposed) _helpWindow.Close(); };
         var tipLists = new ToolTip { AutoPopDelay = 15000, InitialDelay = 300 };
         tipLists.SetToolTip(tbGlobalLists, L.T("settings.lists_tip"));
         new Label { Parent = grpGlobal, Text = L.T("settings.history"), Left = 8, Top = 162, Width = 82, Height = 20,
@@ -1958,9 +2280,20 @@ class ThemedColorTable : ProfessionalColorTable {
             Text = L.T("hook.label"),
         };
         // ── Save / Cancel ─────────────────────────────────────────────────────
-        var btnSave   = new Button { Parent = dlg, Text = L.T("btn.save"),   Left = 396, Top = 675, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
-        var btnCancel = new Button { Parent = dlg, Text = L.T("btn.cancel"), Left = 504, Top = 675, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI, DialogResult = DialogResult.Cancel };
+        var btnCancel = new Button { Parent = dlg, Text = L.T("btn.cancel"), Left = 396, Top = 675, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = bgBtn, ForeColor = fgW, Font = fUI, DialogResult = DialogResult.Cancel };
+        var btnSave   = new Button { Parent = dlg, Text = L.T("btn.save"),   Left = 504, Top = 675, Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = fgW, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
+        new ToolTip().SetToolTip(btnSave,   L.T("btn.save_tip"));
+        new ToolTip().SetToolTip(btnCancel, L.T("btn.cancel_tip"));
         dlg.CancelButton = btnCancel;
+        dlg.AcceptButton = btnSave;
+        dlg.KeyPreview = true;
+        dlg.KeyDown += (s, e) => {
+            if (e.Control && e.KeyCode == Keys.Enter) {
+                btnSave.PerformClick();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+        };
 
         // ── Logic ─────────────────────────────────────────────────────────────
         int     current              = -1;
@@ -2065,12 +2398,8 @@ class ThemedColorTable : ProfessionalColorTable {
             globalLists = ListsTextToDict(tbGlobalLists.Text);
             updateFormatPreview();
         };
-        btnFormatHelp.Click += (s, e) => {
-            string helpUrl = L.Lang == "de"
-                ? "https://mbaas2.github.io/VerBump/de/#format"
-                : "https://mbaas2.github.io/VerBump/#format";
-            OpenUrl(helpUrl);
-        };
+        btnFormatHelp.Click += (s, e) =>
+            ToggleHelpWindow(L.T("settings.format"), L.T("settings.format_tip"), tbFormat, dlg, btnFormatHelp);
         updateFormatPreview = () => {
             string fmt = tbFormat.Text.Trim();
             if (string.IsNullOrEmpty(fmt)) { lblPreview.Text = ""; return; }
@@ -2145,15 +2474,15 @@ class ThemedColorTable : ProfessionalColorTable {
                 })
                 .Select(en => {
                     string c = en.Path.Trim().TrimEnd('\\', '/');
-                    string reason = !Directory.Exists(c) ? "directory not found" : "no VERSION file";
+                    string reason = !Directory.Exists(c) ? L.T("settings.reason_no_dir") : L.T("settings.reason_no_version");
                     return $"  • {DisplayName(en)}: {reason}";
                 })
                 .ToList();
 
             if (problems.Count > 0) {
                 var r = MessageBox.Show(
-                    "The following entries have issues:\n\n" + string.Join("\n", problems) + "\n\nSave anyway?",
-                    "Validation", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                    L.T("settings.validation_msg", string.Join("\n", problems)),
+                    L.T("settings.validation_title"), MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
                 if (r == DialogResult.No) return;
             }
 
@@ -2176,13 +2505,42 @@ class ThemedColorTable : ProfessionalColorTable {
 
         RefreshList(Math.Max(0, Math.Min(initialEntryIndex, entries.Count - 1)));
         LoadEntry(Math.Max(0, Math.Min(initialEntryIndex, entries.Count - 1)));
-        new Label {
+                new Label {
             Parent = dlg, Left = 12, Top = 688, Width = 592, Height = 16,
             Text = jsonPath,
             Font = new Font("Segoe UI", 7.5F),
             ForeColor = Color.FromArgb(110, 110, 115),
             AutoEllipsis = true,
         };
+
+#if DEMO
+        if (ScreenshotDir != null) {
+            string scDir  = ScreenshotDir;
+            string scLang = L.Lang;
+            string scVer  = "";
+            try {
+                var asm = System.Reflection.Assembly.GetExecutingAssembly();
+                using var stream = asm.GetManifestResourceStream("VerBump.VERSION");
+                if (stream != null) scVer = new System.IO.StreamReader(stream).ReadToEnd().Trim();
+            } catch { }
+            dlg.TopMost = true;
+            dlg.Shown += async (s, e) => {
+                await Task.Delay(400);
+                if (ScreenshotHelp) {
+                    btnListsHelp.PerformClick();   // open the ? help window
+                    await Task.Delay(200);         // let the window paint
+                }
+                // composite: dialog + help window (if open); white fill for any gap
+                var settingsWindows = new List<Control> { dlg };
+                if (_helpWindow != null && !_helpWindow.IsDisposed && _helpWindow.Visible)
+                    settingsWindows.Add(_helpWindow);
+                SaveCompositeScreenshot(Path.Combine(scDir, $"settings-{scLang}-{scVer}.png"),
+                    Color.Transparent, settingsWindows.ToArray());
+                dlg.DialogResult = DialogResult.Cancel;
+                dlg.Close();
+            };
+        }
+#endif
 
         if (dlg.ShowDialog(owner?.Visible == true ? owner : null) == DialogResult.OK) {
             if (owner?.Visible == true) { ShouldRestart = true; owner.Close(); }
@@ -2245,6 +2603,57 @@ class ThemedColorTable : ProfessionalColorTable {
         else File.WriteAllText(hookFile, newContent + "\n");
     }
 
+    // ── Post-commit hook (auto-tagging via VERBUMP_PENDING_TAG) ───────────────
+
+    const string PostHookMarker = "# --- VerBump post-commit ---";
+
+    static string GitPostHookPath(string projectDir) =>
+        Path.Combine(projectDir, ".git", "hooks", "post-commit");
+
+    static bool HasGitPostHook(string projectDir) {
+        string hookFile = GitPostHookPath(projectDir);
+        return File.Exists(hookFile) && File.ReadAllText(hookFile).Contains(PostHookMarker);
+    }
+
+    static void InstallGitPostHook(string projectDir) {
+        string hooksDir = Path.Combine(projectDir, ".git", "hooks");
+        if (!Directory.Exists(hooksDir)) return;
+        string hookFile = GitPostHookPath(projectDir);
+        string block = $"\n{PostHookMarker}\n" +
+                       "TAG_FILE=\"$(git rev-parse --git-dir)/VERBUMP_PENDING_TAG\"\n" +
+                       "if [ -f \"$TAG_FILE\" ]; then\n" +
+                       "  ver=$(cat \"$TAG_FILE\")\n" +
+                       "  rm \"$TAG_FILE\"\n" +
+                       "  git tag \"v$ver\" 2>/dev/null && echo \"VerBump: Tagged as v$ver\" || true\n" +
+                       "fi\n" +
+                       $"{PostHookMarker}\n";
+        if (File.Exists(hookFile)) {
+            if (!File.ReadAllText(hookFile).Contains(PostHookMarker))
+                File.AppendAllText(hookFile, block);
+        } else {
+            File.WriteAllText(hookFile, "#!/bin/sh" + block);
+            // Make executable on Unix-like systems (no-op on Windows but harmless)
+            try { TryRunGit(projectDir, $"update-index --chmod=+x .git/hooks/post-commit"); } catch { }
+        }
+    }
+
+    static void RemoveGitPostHook(string projectDir) {
+        string hookFile = GitPostHookPath(projectDir);
+        if (!File.Exists(hookFile)) return;
+        string content = File.ReadAllText(hookFile);
+        if (!content.Contains(PostHookMarker)) return;
+        var lines    = content.Split('\n').ToList();
+        bool inBlock = false;
+        var result   = new List<string>();
+        foreach (var line in lines) {
+            if (line.TrimEnd() == PostHookMarker) { inBlock = !inBlock; continue; }
+            if (!inBlock) result.Add(line);
+        }
+        string newContent = string.Join("\n", result).Trim();
+        if (newContent == "#!/bin/sh" || newContent.Length == 0) File.Delete(hookFile);
+        else File.WriteAllText(hookFile, newContent + "\n");
+    }
+
     // ── Recent settings files ──────────────────────────────────────────────────
 
     static string AppConfigFile() =>
@@ -2253,14 +2662,18 @@ class ThemedColorTable : ProfessionalColorTable {
     static AppConfig LoadAppConfig() {
         try {
             string f = AppConfigFile();
-            if (File.Exists(f))
-                return JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(f),
+            if (File.Exists(f)) {
+                var cfg = JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(f),
                     new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) ?? new();
+                cfg.RecentSettings = NormalizeHistoryList(cfg.RecentSettings, cfg.HistoryMaxLength);
+                cfg.RecentVersions = NormalizeHistoryList(cfg.RecentVersions, cfg.HistoryMaxLength);
+                return cfg;
+            }
             // Migrate from old recent-settings.json
             string old = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VerBump", "recent-settings.json");
             if (File.Exists(old)) {
                 var recent = JsonSerializer.Deserialize<List<string>>(File.ReadAllText(old)) ?? new();
-                return new AppConfig { RecentSettings = recent };
+                return new AppConfig { RecentSettings = NormalizeHistoryList(recent) };
             }
         } catch { }
         return new();
@@ -2285,9 +2698,33 @@ class ThemedColorTable : ProfessionalColorTable {
         return new();   // default: AllowHookBypass = true
     }
 
+    static string NormalizeHistoryPath(string path) {
+        string trimmed = (path ?? "").Trim().Trim('"');
+        if (trimmed.Length == 0) return "";
+        try {
+            return Path.GetFullPath(trimmed)
+                .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        } catch {
+            return trimmed.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        }
+    }
+
+    static List<string> NormalizeHistoryList(IEnumerable<string> paths, int maxLen = int.MaxValue) {
+        var result = new List<string>();
+        foreach (string path in paths ?? []) {
+            string normalized = NormalizeHistoryPath(path);
+            if (normalized.Length == 0) continue;
+            if (result.Any(p => string.Equals(p, normalized, StringComparison.OrdinalIgnoreCase))) continue;
+            result.Add(normalized);
+            if (result.Count >= maxLen) break;
+        }
+        return result;
+    }
+
     static void AddToHistory(List<string> list, string path, int maxLen) {
-        list.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
-        list.Insert(0, path);
+        string normalized = NormalizeHistoryPath(path);
+        list.RemoveAll(p => string.Equals(NormalizeHistoryPath(p), normalized, StringComparison.OrdinalIgnoreCase));
+        list.Insert(0, normalized);
         if (list.Count > maxLen) list.RemoveRange(maxLen, list.Count - maxLen);
     }
 
@@ -2363,6 +2800,69 @@ class ThemedColorTable : ProfessionalColorTable {
         var t = new System.Windows.Forms.Timer { Interval = 8000 };
         t.Tick += (s, e) => { t.Stop(); if (!toast.IsDisposed) toast.Close(); };
         t.Start();
+    }
+
+    // ── Persistent help window (non-modal, stays open while user types) ────────
+    static Form   _helpWindow = null;
+    static Button _helpButton = null;
+    static readonly Color _helpBtnOff = Color.FromArgb(70, 70, 70);
+    static readonly Color _helpBtnOn  = Color.FromArgb(0, 100, 180);
+
+    static void ToggleHelpWindow(string title, string content, Control anchor, Form owner, Button caller) {
+        if (_helpWindow != null && !_helpWindow.IsDisposed) {
+            _helpWindow.Close(); // FormClosed handler resets state
+            return;
+        }
+        var bg = Color.FromArgb(22, 22, 32);
+        var fg = Color.FromArgb(220, 220, 230);
+
+        var win = new Form {
+            Text            = title,
+            Width           = 480, Height = 320,
+            FormBorderStyle = FormBorderStyle.SizableToolWindow,
+            StartPosition   = FormStartPosition.Manual,
+            ShowInTaskbar   = false,
+            BackColor       = bg,
+            ForeColor       = fg,
+        };
+
+        // Position to the right of the owner; fall back to left if screen too narrow
+        var screen = Screen.FromControl(owner).WorkingArea;
+        int x = owner.Right + 8;
+        if (x + win.Width > screen.Right) x = owner.Left - win.Width - 8;
+        int y = anchor != null
+            ? Math.Min(anchor.PointToScreen(Point.Empty).Y, screen.Bottom - win.Height)
+            : owner.Top;
+        win.Location = new Point(Math.Max(screen.Left, x), Math.Max(screen.Top, y));
+
+        var rtb = new RichTextBox {
+            Dock        = DockStyle.Fill,
+            ReadOnly    = true,
+            BackColor   = bg,
+            ForeColor   = fg,
+            BorderStyle = BorderStyle.None,
+            Font        = new Font("Consolas", 9F),
+            ScrollBars  = RichTextBoxScrollBars.Vertical,
+            Padding     = new Padding(8),
+            WordWrap    = false,
+            Text        = content,
+        };
+        win.Controls.Add(rtb);
+
+        // Mark button as active
+        _helpButton = caller;
+        if (caller != null) caller.BackColor = _helpBtnOn;
+
+        owner.FormClosed += (s, e) => { if (!win.IsDisposed) win.Close(); };
+        win.FormClosed   += (s, e) => {
+            _helpWindow = null;
+            if (_helpButton != null && !_helpButton.IsDisposed)
+                _helpButton.BackColor = _helpBtnOff;
+            _helpButton = null;
+        };
+
+        win.Show(owner);
+        _helpWindow = win;
     }
 
     static void ShowToast(string message, string project) {
@@ -2545,12 +3045,108 @@ class ThemedColorTable : ProfessionalColorTable {
         return effective;
     }
 
+    // ── Git helpers ────────────────────────────────────────────────────────────
+
+    static string TryRunGit(string workDir, string arguments, int timeoutMs = 5000) {
+        try {
+            var psi = new System.Diagnostics.ProcessStartInfo("git", arguments) {
+                WorkingDirectory        = workDir,
+                RedirectStandardOutput  = true,
+                RedirectStandardError   = true,
+                UseShellExecute         = false,
+                CreateNoWindow          = true,
+            };
+            using var p = System.Diagnostics.Process.Start(psi);
+            string output = p.StandardOutput.ReadToEnd();
+            if (!p.WaitForExit(timeoutMs)) { p.Kill(); return null; }
+            return p.ExitCode == 0 ? output : null;
+        } catch { return null; }
+    }
+
+    // Fast local check — no process spawn. Walks up from dir looking for .git/.
+    static string FindGitDir(string dir) {
+        while (!string.IsNullOrEmpty(dir)) {
+            string git = Path.Combine(dir, ".git");
+            if (Directory.Exists(git)) return git;
+            string parent = Path.GetDirectoryName(dir);
+            if (parent == dir) break;
+            dir = parent;
+        }
+        return null;
+    }
+
+    // Create a git tag for the given version, optionally push it.
+    static void DoGitTag(string projectDir, string version, bool push, Form owner) {
+        if (string.IsNullOrWhiteSpace(version)) return;
+        string tag = version.StartsWith("v", StringComparison.OrdinalIgnoreCase) ? version : "v" + version;
+        // Check whether tag already exists
+        string existing = TryRunGit(projectDir, $"tag -l \"{tag}\"");
+        if (existing != null && existing.Trim().Equals(tag, StringComparison.OrdinalIgnoreCase)) {
+            MessageBox.Show(L.T("tag.exists", tag), "VerBump", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (TryRunGit(projectDir, $"tag \"{tag}\"") == null) {
+            MessageBox.Show(L.T("tag.error_create"), "VerBump", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+        if (push) {
+            if (TryRunGit(projectDir, $"push origin \"{tag}\"", 30_000) == null)
+                ShowToast(L.T("tag.error_push", tag), tag);
+            else
+                ShowToast(L.T("tag.created_pushed", tag), tag);
+        } else {
+            ShowToast(L.T("tag.created", tag), tag);
+        }
+    }
+
+    /// Returns the absolute path of the git repository root that contains
+    /// <paramref name="dir"/>, or null when not in a git repo / git unavailable.
+    static string TryGetGitRoot(string dir) {
+        string raw = TryRunGit(dir, "rev-parse --show-toplevel");
+        return raw?.Trim().Replace('/', Path.DirectorySeparatorChar);
+    }
+
+    /// Returns the UTC time of the last git commit in <paramref name="projectDir"/>,
+    /// or null when git is unavailable or there are no commits yet.
+    static DateTime? GetLastGitCommitTime(string projectDir) {
+        string output = TryRunGit(projectDir, "log -1 --format=%ct HEAD");
+        if (output == null) return null;
+        if (long.TryParse(output.Trim(), out long epoch))
+            return DateTimeOffset.FromUnixTimeSeconds(epoch).UtcDateTime;
+        return null;
+    }
+
+    /// Returns the list of staged file paths (relative to repo root) for the
+    /// project at <paramref name="projectDir"/>, or null when git is unavailable.
+    static List<string> GetGitStagedFiles(string projectDir) {
+        string output = TryRunGit(projectDir, "diff --cached --name-only");
+        if (output == null) return null;
+        return output.Split('\n')
+                     .Select(s => s.Trim())
+                     .Where(s => s.Length > 0)
+                     .ToList();
+    }
+
     static List<string> GetNewerFiles(string versionFilePath, int max, HashSet<string> ignoreDirs, List<string> ignoreFiles) {
         var result = new List<string>();
         try {
-            DateTime versionTime = File.GetLastWriteTimeUtc(versionFilePath);
-            string projectDir    = Path.GetDirectoryName(versionFilePath);
+            string projectDir     = Path.GetDirectoryName(versionFilePath);
             var gitignorePatterns = LoadGitignorePatterns(projectDir);
+
+            // Prefer git-based threshold: last commit time
+            var lastCommit = GetLastGitCommitTime(projectDir);
+            if (lastCommit.HasValue) {
+                // VERSION is fine if it was modified after the last commit
+                if (File.GetLastWriteTimeUtc(versionFilePath) > lastCommit.Value)
+                    return result; // empty = OK
+                // Show files changed since last commit so the user sees what's pending
+                CollectNewerFiles(projectDir, projectDir, lastCommit.Value, versionFilePath,
+                                  max, result, gitignorePatterns, ignoreDirs, ignoreFiles);
+                return result;
+            }
+
+            // Fallback: compare against VERSION mtime (no git available)
+            DateTime versionTime = File.GetLastWriteTimeUtc(versionFilePath);
             CollectNewerFiles(projectDir, projectDir, versionTime, versionFilePath,
                               max, result, gitignorePatterns, ignoreDirs, ignoreFiles);
         } catch (Exception ex) { Log.Write("GetNewerFiles", ex); }
@@ -2612,13 +3208,6 @@ class ThemedColorTable : ProfessionalColorTable {
         } catch (Exception ex) { Log.Write($"CollectNewerFiles/{dir}", ex); }
     }
 }
-
-
-
-
-
-
-
 
 
 

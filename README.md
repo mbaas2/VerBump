@@ -48,6 +48,8 @@ Output: `src/bin/Release/net8.0-windows/win-x64/publish/VerBump.exe`
 
 ## Support
 
+Found a bug or have a feature request? [Open an issue](https://github.com/mbaas2/VerBump/issues) or contact me directly at [verbump@mbaas.de](mailto:verbump@mbaas.de) — I'm available for questions, feedback, and the occasional VerBump war story.
+
 VerBump is free and open source (MIT). If it saves you time, consider buying me a coffee or a coffe machine:
 
 [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor%20on%20GitHub-%E2%9D%A4-pink?logo=github-sponsors&style=for-the-badge)](https://github.com/sponsors/mbaas2)

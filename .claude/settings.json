@@ -39,7 +39,13 @@
       "Bash(grep -v \"^$\")",
       "Bash(dotnet restore:*)",
       "Read(//tmp/**)",
-      "Read(//c/Program Files/dotnet/sdk/10.0.201/**)"
+      "Read(//c/Program Files/dotnet/sdk/10.0.201/**)",
+      "Bash(git -C c:/Git/VerBump show HEAD:src/VERSION)",
+      "Bash(git -C c:/Git/VerBump show HEAD~1:src/VERSION)",
+      "Bash(git -C c:/Git/VerBump log --oneline -5 -- src/VERSION)",
+      "Bash(grep -n \"dlg\\\\.ShowDialog\\\\|dlg\\\\.Show\\\\b\\\\|return;\\\\s*$\\\\|AcceptButton\\\\|CancelButton\" c:/Git/VerBump/src/VerBump.cs)",
+      "Bash(srcbinReleasenet8.0-windowsVerBump.exe --help)",
+      "Bash(\"src/bin/Release/net8.0-windows/VerBump.exe\" --help)"
     ],
     "additionalDirectories": [
       "c:\\Git\\VerBump",

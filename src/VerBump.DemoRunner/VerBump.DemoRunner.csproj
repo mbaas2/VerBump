@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ApplicationIcon>..\verbump.ico</ApplicationIcon>
+    <AssemblyName>VerBump.DemoRunner</AssemblyName>
+    <RootNamespace>VerBump</RootNamespace>
+    <DefineConstants>$(DefineConstants);DEMO</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\VerBump.cs" Link="VerBump.cs" />
+    <Compile Include="..\BuiltInLang.g.cs" Link="BuiltInLang.g.cs" />
+
+    <EmbeddedResource Include="..\VERSION">
+      <Link>VERSION</Link>
+      <LogicalName>VerBump.VERSION</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\lang.de.json">
+      <Link>lang.de.json</Link>
+      <LogicalName>VerBump.lang_de.json</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\lang.en.json">
+      <Link>lang.en.json</Link>
+      <LogicalName>VerBump.lang_en.json</LogicalName>
+    </EmbeddedResource>
+
+    <Content Include="..\verbump.ico">
+      <Link>verbump.ico</Link>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\lang.de.json">
+      <Link>lang.de.json</Link>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\lang.en.json">
+      <Link>lang.en.json</Link>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\screenshot-demo.json">
+      <Link>screenshot-demo.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "dgSpecHash": "l8Uv9cgh4JA=",
+  "success": true,
+  "projectFilePath": "C:\\Git\\VerBump\\src\\VerBump.DemoRunner\\VerBump.DemoRunner.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\mb\\.nuget\\packages\\microsoft.netcore.app.ref\\8.0.25\\microsoft.netcore.app.ref.8.0.25.nupkg.sha512",
+    "C:\\Users\\mb\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\8.0.25\\microsoft.windowsdesktop.app.ref.8.0.25.nupkg.sha512",
+    "C:\\Users\\mb\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\8.0.25\\microsoft.aspnetcore.app.ref.8.0.25.nupkg.sha512",
+    "C:\\Users\\mb\\.nuget\\packages\\microsoft.netcore.app.host.win-x64\\8.0.25\\microsoft.netcore.app.host.win-x64.8.0.25.nupkg.sha512"
+  ],
+  "logs": []
+}
