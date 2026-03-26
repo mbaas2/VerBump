@@ -6,9 +6,9 @@
 [![GitHub release](https://img.shields.io/github/v/release/mbaas2/VerBump)](https://github.com/mbaas2/VerBump/releases/latest)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?logo=github-sponsors)](https://github.com/sponsors/mbaas2)
 
-Keep all your projects' `VERSION` files in one place. Bump major, minor, or patch
-with a single keystroke — before every `git push`, open VerBump and see the status
-of all your repos at a glance.
+Ever pushed code only to realize you forgot to bump the VERSION file — again?
+VerBump keeps all your projects' version state in one view, highlights stale
+ones in orange, and lets you bump with a single keystroke — before every push.
 
 → **[Website & full documentation](https://mbaas2.github.io/VerBump/)**
 
