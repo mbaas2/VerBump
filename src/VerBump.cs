@@ -1459,7 +1459,7 @@ Screenshot automation:
         }
         // Reposition buttons flush to the right edge on every layout pass.
         bottomPanel.Layout += (s, e) => {
-            int r = bottomPanel.ClientSize.Width - 10;
+            int r = bottomPanel.ClientSize.Width - 16;
             btnOk.Left  = r - btnOk.Width;
             btnCan.Left = btnOk.Left - 10 - btnCan.Width;
             if (btnBypass != null)
