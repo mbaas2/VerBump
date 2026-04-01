@@ -26,11 +26,24 @@ echo Taking EN screenshots...
 echo Taking DE screenshots...
 "%EXE%" C:\devt\VerBump\doc\settings.json --lang=de --settings="%DEMO%" --screenshot="%OUT%" --screenshot-entry=%ENTRY% --screenshot-row=%ROW% --screenshot-help
 
+echo Taking EN hook screenshot...
+"%EXE%" "C:\devt\VerBump\doc\MobileClient\VERSION" C:\devt\VerBump\doc\settings.json --lang=en --screenshot="%OUT%" --screenshot-hook=1
+
+echo Taking DE hook screenshot...
+"%EXE%" "C:\devt\VerBump\doc\MobileClient\VERSION" C:\devt\VerBump\doc\settings.json --lang=de --screenshot="%OUT%" --screenshot-hook=1
+
 for /f "delims=" %%F in ('dir /b /o-d "%OUT%\main-en-*.png" 2^>nul') do (
     copy /y "%OUT%\%%F" "%OUT%\main-en.png" >nul
     goto :main_en_done
 )
 :main_en_done
+
+for /f "delims=" %%F in ('dir /b /o-d "%OUT%\hook-en-*.png" 2^>nul') do (
+    copy /y "%OUT%\%%F" "%OUT%\hook-en.png" >nul
+    goto :hook_en_done
+)
+:hook_en_done
+
 echo Done. Files written to %OUT%\\
 dir "%OUT%\*.png" /b
 

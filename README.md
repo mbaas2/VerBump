@@ -14,6 +14,8 @@ ones in orange, and lets you bump with a single keystroke — before every push.
 
 ![VerBump main window](docs/screenshots/main-en.png)
 
+![VerBump Git pre-commit hook](docs/screenshots/hook-en.png)
+
 ## Features
 
 - **Staleness detection** — highlights projects where source files are newer than the current VERSION or were updated after last commit

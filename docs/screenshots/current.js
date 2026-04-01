@@ -1,1 +1,1 @@
-var VERBUMP_VERSION = "1.1.9";
+var VERBUMP_VERSION = "1.1.10";

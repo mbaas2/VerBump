@@ -631,6 +631,7 @@ class ThemedColorTable : ProfessionalColorTable {
     static int          ScreenshotEntry      = 0;    // --screenshot-entry=N  (0-based)
     static int          ScreenshotRow        = -1;   // --screenshot-row=N    (show dropdown on row N)
     static bool         ScreenshotHelp       = false;// --screenshot-help     (open ? window)
+    static int          ScreenshotHookStaged = -2;   // --screenshot-hook[=N] (-2=off; -1=mtime-fallback; ≥0=staged count)
 #endif
 
     [STAThread]
@@ -684,6 +685,10 @@ Screenshot automation:
                 if (int.TryParse(arg[17..], out int sr)) ScreenshotRow = Math.Max(0, sr);
             } else if (arg.Equals("--screenshot-help", StringComparison.OrdinalIgnoreCase)) {
                 ScreenshotHelp = true;
+            } else if (arg.StartsWith("--screenshot-hook", StringComparison.OrdinalIgnoreCase)) {
+                int eq = arg.IndexOf('=');
+                ScreenshotHookStaged = eq >= 0 && int.TryParse(arg[(eq + 1)..], out int sh) ? sh : 1;
+                CheckMode = true;
 #endif
             } else if (arg.Equals("--check", StringComparison.OrdinalIgnoreCase)) {
                 CheckMode = true;
@@ -806,6 +811,11 @@ Screenshot automation:
             checkIgnoreDirs  = BuildEffectiveIgnoreDirs(settings, ce);
             checkIgnoreFiles = BuildEffectiveIgnoreFiles(settings, ce);
 
+#if DEMO
+            if (ScreenshotHookStaged > -2) {
+                checkStagedCount = ScreenshotHookStaged; // fake staged count for screenshot
+            } else {
+#endif
             // Fast path: ask git whether VERSION is already staged for this commit.
             // If yes, the user already bumped – no UI needed.
             string projectDir = Path.GetDirectoryName(vf);
@@ -829,6 +839,9 @@ Screenshot automation:
                 // Fallback (no git): mtime comparison
                 Environment.Exit(0); return;
             }
+#if DEMO
+            }
+#endif
             // Show only the stale project, not all projects from settings.json
             settings = new Settings {
                 Paths       = [matchingEntry ?? ce],
@@ -899,20 +912,27 @@ Screenshot automation:
         bool hookBypassAllowed = CheckMode && policy.AllowHookBypass;
         var btnOk  = new Button {
             Text = CheckMode ? L.T("btn.commit") : L.T("btn.save"),
-            Top = 15, Width = 120, Height = 35,
+            Top = 15, Height = 35,
             DialogResult = DialogResult.OK,
             FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204),
-            ForeColor = Color.White, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
+            ForeColor = Color.White, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold) };
+        btnOk.Width = Math.Max(120, TextRenderer.MeasureText(btnOk.Text, btnOk.Font).Width + 24);
+        if (CheckMode) btnOk.Enabled = false;
         var btnCan = new Button {
             Text = CheckMode ? L.T("btn.block_commit") : L.T("btn.cancel"),
-            Top = 15, Width = 120, Height = 35,
+            Top = 15, Height = 35,
             DialogResult = DialogResult.Cancel,
             FlatStyle = FlatStyle.Flat,
             BackColor = CheckMode ? Color.FromArgb(160, 40, 40) : bgBtn,
-            ForeColor = CheckMode ? Color.White : fgW };
+            ForeColor = CheckMode ? Color.White : fgW,
+            Font = new Font("Segoe UI", 9.5F) };
+        btnCan.Width = Math.Max(120, TextRenderer.MeasureText(btnCan.Text, btnCan.Font).Width + 24);
         if (!CheckMode) {
             new ToolTip().SetToolTip(btnOk,  L.T("btn.save_tip"));
             new ToolTip().SetToolTip(btnCan, L.T("btn.cancel_tip"));
+        } else {
+            new ToolTip().SetToolTip(btnOk,  L.T("btn.commit_tip"));
+            new ToolTip().SetToolTip(btnCan, L.T("btn.block_commit_tip"));
         }
 
         form.AcceptButton = btnOk;
@@ -944,6 +964,9 @@ Screenshot automation:
         var mainPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(10), BackColor = bgDark, FlowDirection = FlowDirection.TopDown, WrapContents = false };
         mainPanel.AutoScrollMinSize = new Size(requestedContentWidth + 20, 0);
         var uiEntries = new List<ProjectUI>();
+        Action updateCommitButton = CheckMode
+            ? () => btnOk.Enabled = uiEntries.Any(u => u.VersionBox.Text.Trim() != u.OriginalVersion)
+            : () => { };
         int selectedIndex = 0;
         Action updateSelection = null;
         var undoStack = new Stack<(int entryIdx, string oldVersion, string label)>();
@@ -1008,6 +1031,7 @@ Screenshot automation:
         var ctxTag           = new ToolStripMenuItem() { ForeColor = Color.FromArgb(72, 199, 142) };
         var ctxTagPush       = new ToolStripMenuItem() { ForeColor = Color.FromArgb(72, 199, 142) };
         var ctxAddToSettings = new ToolStripMenuItem(L.T("toolbar.add_project")) { ForeColor = fgW };
+        var ctxHook          = new ToolStripMenuItem() { ForeColor = Color.FromArgb(72, 199, 142) };
         var ctxBottomSep    = new ToolStripSeparator();
         rowCtx.Items.Add(ctxEdit);
         rowCtx.Items.Add(ctxExplore);
@@ -1015,6 +1039,7 @@ Screenshot automation:
         rowCtx.Items.Add(ctxTagSep);
         rowCtx.Items.Add(ctxTag);
         rowCtx.Items.Add(ctxTagPush);
+        rowCtx.Items.Add(ctxHook);
         rowCtx.Items.Add(ctxBottomSep);
         rowCtx.Items.Add(ctxAddToSettings);
         rowCtx.BackColor           = bgMid;
@@ -1023,6 +1048,7 @@ Screenshot automation:
         ctxAddVersionFav.BackColor = bgMid;
         ctxTag.BackColor           = bgMid;
         ctxTagPush.BackColor       = bgMid;
+        ctxHook.BackColor          = bgMid;
         ctxAddToSettings.BackColor = bgMid;
 
         rowCtx.Opening += (s, e) => {
@@ -1047,15 +1073,19 @@ Screenshot automation:
                 ctxTagSep.Visible  = hasGit;
                 ctxTag.Visible     = hasGit;
                 ctxTagPush.Visible = hasGit;
+                ctxHook.Visible    = hasGit;
                 if (hasGit) {
                     ctxTag.Text     = L.T("menu.tag_head",      tagName);
                     ctxTagPush.Text = L.T("menu.tag_head_push", tagName);
+                    string gitRoot  = Path.GetDirectoryName(FindGitDir(tagDir));
+                    ctxHook.Text    = HasGitHook(gitRoot) ? L.T("hook.remove") : L.T("hook.install");
                 }
             } else {
                 ctxAddVersionFav.Visible = false;
                 ctxTagSep.Visible        = false;
                 ctxTag.Visible           = false;
                 ctxTagPush.Visible       = false;
+                ctxHook.Visible          = false;
             }
             ctxBottomSep.Visible = ctxAddToSettings.Visible;
         };
@@ -1081,6 +1111,18 @@ Screenshot automation:
             if (ctxTargetIndex < 0 || ctxTargetIndex >= uiEntries.Count) return;
             var ui = uiEntries[ctxTargetIndex];
             DoGitTag(Path.GetDirectoryName(ui.FilePath), ui.VersionBox.Text.Trim(), true, form);
+        };
+        ctxHook.Click += (s, e) => {
+            if (ctxTargetIndex < 0 || ctxTargetIndex >= uiEntries.Count) return;
+            string fp      = uiEntries[ctxTargetIndex].FilePath;
+            string dir     = fp != null ? Path.GetDirectoryName(fp) : null;
+            string gitDir  = dir != null ? FindGitDir(dir) : null;
+            if (gitDir == null) return;
+            string gitRoot = Path.GetDirectoryName(gitDir);
+            try {
+                if (HasGitHook(gitRoot)) { RemoveGitHook(gitRoot);  setStatus(L.T("hook.removed_ok"),   false); }
+                else                     { InstallGitHook(gitRoot); setStatus(L.T("hook.installed_ok"), false); }
+            } catch (Exception ex) { setStatus(ex.Message, true); }
         };
         ctxAddToSettings.Click += (s, e) => {
             if (ctxTargetIndex < 0 || ctxTargetIndex >= uiEntries.Count) return;
@@ -1244,8 +1286,9 @@ Screenshot automation:
                 if (e.KeyCode == Keys.Escape) { e.Handled = true; e.SuppressKeyPress = true; btnCan.PerformClick(); }
             };
             tb.TextChanged += (s, e) => {
-                if (tb.BackColor == Color.DarkGreen) return;
-                tb.BackColor = scheme.Matches(tb.Text.Trim()) ? bgLight : Color.FromArgb(110, 50, 0);
+                if (tb.BackColor != Color.DarkGreen)
+                    tb.BackColor = scheme.Matches(tb.Text.Trim()) ? bgLight : Color.FromArgb(110, 50, 0);
+                updateCommitButton();
             };
             var rowDropdown = AttachVersionHints(tb, scheme);
 
@@ -1354,8 +1397,9 @@ Screenshot automation:
                 if (e.KeyCode == Keys.Escape) { e.Handled = true; e.SuppressKeyPress = true; btnCan.PerformClick(); }
             };
             tb.TextChanged += (s, e) => {
-                if (tb.BackColor == Color.DarkGreen) return;
-                tb.BackColor = scheme.Matches(tb.Text.Trim()) ? bgLight : Color.FromArgb(110, 50, 0);
+                if (tb.BackColor != Color.DarkGreen)
+                    tb.BackColor = scheme.Matches(tb.Text.Trim()) ? bgLight : Color.FromArgb(110, 50, 0);
+                updateCommitButton();
             };
             var rowDropdown2 = AttachVersionHints(tb, scheme);
             var buttonPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(5, 5, 0, 0) };
@@ -1448,12 +1492,16 @@ Screenshot automation:
         bottomPanel.Controls.Add(btnCan);
         Button btnBypass = null;
         if (hookBypassAllowed) {
+            var bypassFont = new Font("Segoe UI", 9.5F);
+            string bypassText = L.T("btn.bypass_hook");
+            int bypassW = Math.Max(130, TextRenderer.MeasureText(bypassText, bypassFont).Width + 24);
             btnBypass = new Button {
-                Text = L.T("btn.bypass_hook"),
-                Top = 15, Width = 130, Height = 35,
+                Text = bypassText,
+                Top = 15, Width = bypassW, Height = 35,
                 FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(160, 100, 0), ForeColor = Color.White,
-                Font = new Font("Segoe UI", 9.5F),
+                Font = bypassFont,
             };
+            new ToolTip().SetToolTip(btnBypass, L.T("btn.bypass_hook_tip"));
             btnBypass.Click += (s, e) => Environment.Exit(0);
             bottomPanel.Controls.Add(btnBypass);
         }
@@ -1917,6 +1965,15 @@ Screenshot automation:
                 Directory.CreateDirectory(scDir);
                 form.TopMost = true;
                 Application.DoEvents();
+
+                // Hook-mode screenshot: just capture the form and exit
+                if (ScreenshotHookStaged > -2) {
+                    string hookPath = Path.Combine(scDir, $"hook-{scLang}-{scVer}.png");
+                    SaveCompositeScreenshot(hookPath, Color.White, form);
+                    form.DialogResult = DialogResult.Cancel;
+                    form.Close();
+                    return;
+                }
 
                 // Select target row and position cursor on the list token (if any)
                 TokenHint dropHint  = null;

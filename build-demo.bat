@@ -8,7 +8,6 @@ dotnet build "%PROJ%" -c Release
 if %errorlevel%==0 (
     echo.
     echo OK: %OUT%\VerBump.DemoRunner.exe
-    explorer "%~dp0%OUT%"
 ) else (
     echo.
     echo FEHLER beim Build.
