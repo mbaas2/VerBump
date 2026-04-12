@@ -39,6 +39,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "contextmenu"; Description: "Explorer-Kontextmenü: Ordner mit VerBump öffnen"; GroupDescription: "Shell-Integration:"; Flags: unchecked
 Name: "versionmenu";  Description: "Explorer-Kontextmenü: VERSION-Datei in VerBump öffnen und/oder direkt erhöhen"; GroupDescription: "Shell-Integration:"; Flags: unchecked
 Name: "settingsmenu"; Description: "Explorer-Kontextmenü: verbump-settings.json direkt in VerBump öffnen";                              GroupDescription: "Shell-Integration:"; Flags: unchecked
+Name: "dblclick";     Description: "Doppelklick auf VERSION-Dateien öffnet VerBump (gilt für alle Dateien ohne Extension)"; GroupDescription: "Shell-Integration:"; Flags: unchecked
 
 ; ── Registry (Kontextmenü) ─────────────────────────────────────────────────────
 
@@ -56,7 +57,6 @@ Root: HKLM; Subkey: "Software\Classes\*\shell\VerBump.Open\command";   ValueType
 Root: HKLM; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                          ValueType: string; ValueName: "";            ValueData: "Version erhöhen (SemVer)";     Flags: uninsdeletekey; Tasks: versionmenu
 Root: HKLM; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                          ValueType: string; ValueName: "MUIVerb";     ValueData: "Version erhöhen (SemVer)";     Tasks: versionmenu
 Root: HKLM; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                          ValueType: string; ValueName: "Icon";        ValueData: "{app}\{#AppExeName},0";        Tasks: versionmenu
-Root: HKLM; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                          ValueType: string; ValueName: "SubCommands"; ValueData: "";                             Tasks: versionmenu
 Root: HKLM; Subkey: "Software\Classes\*\shell\VerBump.VERSION";                          ValueType: string; ValueName: "AppliesTo";   ValueData: "System.FileName: ""VERSION"""; Tasks: versionmenu
 Root: HKLM; Subkey: "Software\Classes\*\shell\VerBump.VERSION\shell\Bump1";              ValueType: string; ValueName: "";            ValueData: "Major +";                      Flags: uninsdeletekey; Tasks: versionmenu
 Root: HKLM; Subkey: "Software\Classes\*\shell\VerBump.VERSION\shell\Bump1\command";      ValueType: string; ValueName: "";            ValueData: """{app}\{#AppExeName}"" ""%1"" --bump=1"; Tasks: versionmenu
@@ -69,6 +69,11 @@ Root: HKLM; Subkey: "Software\Classes\*\shell\VerBump.Settings";           Value
 Root: HKLM; Subkey: "Software\Classes\*\shell\VerBump.Settings";           ValueType: string; ValueName: "Icon";      ValueData: "{app}\{#AppExeName},0";                               Tasks: settingsmenu
 Root: HKLM; Subkey: "Software\Classes\*\shell\VerBump.Settings";           ValueType: string; ValueName: "AppliesTo"; ValueData: "System.FileName: ""verbump-settings.json""";                 Tasks: settingsmenu
 Root: HKLM; Subkey: "Software\Classes\*\shell\VerBump.Settings\command";   ValueType: string; ValueName: "";          ValueData: """{app}\{#AppExeName}"" ""%1""";                      Tasks: settingsmenu
+; Doppelklick auf Dateien ohne Extension → VerBump (HKCU, kein Admin nötig)
+Root: HKCU; Subkey: "Software\Classes\.";                                    ValueType: string; ValueName: "";    ValueData: "VerBump.VERSIONFile";      Flags: uninsdeletevalue; Tasks: dblclick
+Root: HKCU; Subkey: "Software\Classes\VerBump.VERSIONFile";                  ValueType: string; ValueName: "";    ValueData: "VERSION file";             Flags: uninsdeletekey;   Tasks: dblclick
+Root: HKCU; Subkey: "Software\Classes\VerBump.VERSIONFile\DefaultIcon";      ValueType: string; ValueName: "";    ValueData: "{app}\{#AppExeName},0";    Tasks: dblclick
+Root: HKCU; Subkey: "Software\Classes\VerBump.VERSIONFile\shell\open\command"; ValueType: string; ValueName: "";  ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: dblclick
 ; Kontextmenü für Ordner-Hintergrund (Rechtsklick im Ordner)
 Root: HKLM; Subkey: "Software\Classes\Directory\Background\shell\VerBump";         ValueType: string; ValueName: "";     ValueData: "Mit VerBump öffnen";              Flags: uninsdeletekey; Tasks: contextmenu
 Root: HKLM; Subkey: "Software\Classes\Directory\Background\shell\VerBump";         ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#AppExeName},0";           Tasks: contextmenu

@@ -1448,7 +1448,6 @@ Screenshot automation:
             AttachRowEvents2(selectionPanel); AttachRowEvents2(table);
             AttachRowEvents2(lbl); AttachRowEvents2(lblHotkey); AttachRowEvents2(iconBox); AttachRowEvents2(strip);
             AttachRowEvents2(buttonPanel);
-            foreach (Control c in buttonPanel.Controls) AttachRowEvents2(c);
             uiEntries.Add(new ProjectUI { SelectionPanel = selectionPanel, StatusStrip = strip, VersionBox = tb,
                 FilePath = target, OriginalVersion = currentV, Scheme = scheme, Backup = false, Entry = entry, IsUnsaved = true, ListDropdown = rowDropdown2 });
             selectedIndex = uiEntries.Count - 1;

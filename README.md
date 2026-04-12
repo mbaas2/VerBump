@@ -25,7 +25,7 @@ ones in orange, and lets you bump with a single keystroke — before every push.
 - **Multilingual** — English and German; add more by dropping a `lang.xx.json` next to the exe
 - **Zero dependencies** — single self-contained `.exe`, no .NET runtime installation needed
 - **Git pre-commit hook** — install per project from Settings; blocks commits when VERSION is stale
-- **Explorer context menu** — right-click a folder or `VERSION` file to open VerBump or silently bump Major/Minor/Patch
+- **Explorer context menu** — right-click a folder or `VERSION` file to open VerBump or silently bump Major/Minor/Patch; optional installer task registers double-click support for extension-less files
 - **CLI arguments** — `--check`, `--bump=N`, `--settings=<path>`, or pass a project path directly
 
 ## Download

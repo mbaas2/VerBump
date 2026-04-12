@@ -35,7 +35,7 @@ dotnet publish "$SrcDir\VerBump.csproj" `
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish fehlgeschlagen." }
 Write-Host "      OK" -ForegroundColor Green
 
-# ── 2. Installer ──────────────────────────────────────────────────────────────
+# ── 2. Installer ────────────────────j──────────────────────────────────────────
 Write-Host "[2/5] Inno Setup..." -ForegroundColor Yellow
 if (-not (Test-Path $Iscc)) { throw "ISCC.exe nicht gefunden: $Iscc" }
 & $Iscc /Q "$SrcDir\VerBump.iss"
