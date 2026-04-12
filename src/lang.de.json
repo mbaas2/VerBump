@@ -3,7 +3,7 @@
   "btn.save_tip":           "Speichern: Enter / Ctrl+Enter",
   "btn.cancel_tip":         "Verwerfen: Escape",
   "btn.cancel":             "✕ Abbrechen",
-  "btn.commit":             "✓ Bump & Commit",
+  "btn.commit":             "✓ Bump && Commit",
   "btn.commit_tip":         "Bump & Commit: Enter",
   "btn.block_commit":       "✗ Commit stoppen",
   "btn.block_commit_tip":   "Commit stoppen: Escape",

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("VerBump.DemoRunner")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+af4477c55884d3ce236a20b33aac79a855b6c6b8")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+901735d0f64f3510e364154068984e44e9b84083")]
 [assembly: System.Reflection.AssemblyProductAttribute("VerBump.DemoRunner")]
 [assembly: System.Reflection.AssemblyTitleAttribute("VerBump.DemoRunner")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
